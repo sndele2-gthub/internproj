@@ -27,10 +27,10 @@ app = Flask(__name__)
 
 class Priority(Enum):
     """Priority levels for feedback items."""
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
+    LOW = "Low"
+    MEDIUM = "Medium"
+    HIGH = "High"
+    CRITICAL = "Critical"
 
 # This knowledge base contains the categories, keywords, and examples for classification.
 KNOWLEDGE_BASE = [
@@ -72,7 +72,7 @@ URGENCY_INDICATORS = {
 }
 
 # Global configuration constants
-SIMILARITY_THRESHOLD = 0.35
+SIMILARITY_THRESHOLD = 0.20
 DEFAULT_CATEGORY = "General_Feedback"
 MAX_TEXT_LENGTH = 5000
 
