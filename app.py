@@ -797,4 +797,57 @@ def home():
                 box-shadow: 0 4px 20px rgba(0,0,0,0.15);
             }
 
-            .critical
+            .critical {
+                border-color: #e63946;
+                background: #fff0f0;
+            }
+            .high {
+                border-color: #ffba08;
+                background: #fffbe6;
+            }
+            .medium {
+                border-color: #43aa8b;
+                background: #f0fff5;
+            }
+            .low {
+                border-color: #577590;
+                background: #f3f9ff;
+            }
+        </style>
+    </head>
+    <body>
+        <header class="header">
+            <div class="container">
+                <div class="header-content">
+                    <div class="logo-section">
+                        <div class="logo">SW</div>
+                        <div class="title-section">
+                            <h1>Feedback Classification & Prioritization API</h1>
+                            <p class="subtitle">Advanced Classification &amp; Prioritization • Built for Manufacturing Excellence</p>
+                        </div>
+                    </div>
+                    <div class="status-badge">
+                        ✅ System Online
+                    </div>
+                </div>
+            </div>
+        </header>
+        <main class="main-content">
+            <div class="container">
+                <div class="section">
+                    <h2><span class="icon">🎯</span> Overview</h2>
+                    <p>This API automatically categorizes and prioritizes workplace feedback for manufacturing environments, assigning clear categories and urgency levels for better decision making.</p>
+                </div>
+            </div>
+        </main>
+        <footer class="footer">
+            <div class="container">
+                <p>&copy; 2025 Smurfit WestRock • Advanced Feedback Classification System</p>
+                <p>Supporting operational excellence in sustainable packaging solutions</p>
+                <p style="font-size: 0.8rem; opacity: 0.7; margin-top: 1rem;">Built by Sean</p>
+            </div>
+        </footer>
+    </body>
+    </html>
+    """
+
