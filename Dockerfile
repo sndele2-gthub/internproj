@@ -8,8 +8,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+
 # Copy the main application file with its specific name
-COPY "SystemCodeapp.py" .
+COPY app.py .
 
 # Use the correct file name with spaces in the command
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "System Code app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "app:app"]
