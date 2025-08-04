@@ -136,15 +136,27 @@ KNOWLEDGE_BASE = [
     }
 ]
 
-# (All other code is unchanged...)
-
 # ... (Keep all your classes and functions here, unchanged, as before) ...
 
 # Initialize enhanced classifier
 classifier = EnhancedFeedbackClassifier(KNOWLEDGE_BASE)
 
 def validate_request_data(data: Optional[Dict]) -> tuple[bool, str]:
-    # (Unchanged...)
+    """Validate incoming request data."""
+    if not data:
+        return False, "No JSON data provided"
+
+    if 'text' not in data:
+        return False, "Missing 'text' field in request"
+
+    text = data.get('text', '')
+    if not isinstance(text, str):
+        return False, "'text' field must be a string"
+
+    if len(text) > MAX_TEXT_LENGTH:
+        return False, f"Text length exceeds maximum allowed ({MAX_TEXT_LENGTH} characters)"
+
+    return True, ""
 
 @app.errorhandler(400)
 def bad_request(error):
@@ -157,10 +169,10 @@ def internal_error(error):
     logger.error(f"Internal server error: {error}")
     return jsonify({"error": "Internal server error"}), 500
 
-
 @app.route("/")
 def home():
     # (Unchanged...)
+    return "<h1>API Home - Documentation Here</h1>"
 
 # ---- UPDATED /classify ENDPOINT ----
 @app.route("/classify", methods=["POST"])
@@ -194,4 +206,3 @@ def classify():
 if __name__ == "__main__":
     logger.info("Starting Enhanced Feedback Classification API...")
     app.run(host="0.0.0.0", port=5000, debug=False)
-
