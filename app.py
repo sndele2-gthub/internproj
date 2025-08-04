@@ -36,17 +36,17 @@ class Priority(Enum):
 KNOWLEDGE_BASE = [
     {
         "category": "Safety Concern",
-        "keywords": ["safety", "emergency", "danger", "hazard", "risk", "injury", "accident", "unsafe", "spill", "leak", "fire", "toxic", "chemical", "guard", "protective", "first aid", "evacuation", "blocked", "exit", "warning", "caution", "slip", "fall", "cut", "burn", "electrical", "shock", "noise", "loud", "ppe", "helmet", "gloves", "goggles", "mask", "respirator"],
-        "examples": ["Emergency stop failed; risk of injury", "Hazardous spill in aisle", "Guard rail is loose", "Forklift has worn tires", "Chemical leak in storage area", "Missing safety signs", "Blocked emergency exit", "Frayed electrical cord", "Noise levels exceeding limits", "Spill kit missing", "First aid kit expired items", "Ladder rungs showing wear", "Workers not wearing proper PPE", "Wet floor without warning signs", "Sharp edges on equipment"]
+        "keywords": ["safety", "emergency", "danger", "hazard", "risk", "injury", "accident", "unsafe", "spill", "leak", "fire", "toxic", "chemical", "guard", "protective", "first aid", "evacuation", "blocked", "exit", "warning", "caution", "slip", "fall", "cut", "burn", "electrical", "shock", "noise", "loud", "ppe", "helmet", "gloves", "goggles", "mask", "respirator", "emergency stop", "guard rail", "loose", "unstable", "tripping", "entanglement", "crush"],
+        "examples": ["Emergency stop failed; risk of injury", "Hazardous spill in aisle", "Guard rail is loose", "Forklift has worn tires", "Chemical leak in storage area", "Missing safety signs", "Blocked emergency exit", "Frayed electrical cord", "Noise levels exceeding limits", "Spill kit missing", "First aid kit expired items", "Ladder rungs showing wear", "Workers not wearing proper PPE", "Wet floor without warning signs", "Sharp edges on equipment", "Loose guard rail on platform", "Something poses a risk", "Emergency stop failed"]
     },
     {
         "category": "Machine/Equipment Issue",
-        "keywords": ["machine", "equipment", "conveyor", "motor", "pump", "compressor", "hydraulic", "mechanical", "broken", "malfunction", "jam", "stuck", "slow", "fast", "vibration", "noise", "leak", "pressure", "temperature", "calibration", "maintenance", "repair", "replace", "belt", "chain", "gear", "bearing", "sensor", "control", "display", "gauge", "meter", "alarm", "error", "fault", "overheating", "smoking", "grinding"],
+        "keywords": ["machine", "equipment", "conveyor", "motor", "pump", "compressor", "hydraulic", "mechanical", "broken", "malfunction", "jam", "stuck", "slow", "fast", "vibration", "noise", "leak", "pressure", "temperature", "calibration", "maintenance", "repair", "replace", "belt", "chain", "gear", "bearing", "sensor", "control", "display", "gauge", "meter", "alarm", "error", "fault", "overheating", "smoking", "grinding", "slipping", "pallet jack", "scanner", "wheels", "gears", "motor", "hydraulics"],
         "examples": ["Conveyor belt is slipping", "Paper web keeps breaking", "Banding machine jamming", "Quality control scanner malfunctioning", "Loading dock hydraulics slow", "Corrugator heating elements inconsistent", "Pallet jack wheels sticking", "Air compressor running continuously", "Conveyor speed control erratic", "Scale calibration seems off", "Pressure gauge readings inconsistent", "Cooling system not maintaining temp", "Motor vibrations increasing", "Dock leveler hydraulics leaking", "Machine making strange grinding noise", "Equipment overheating frequently"]
     },
     {
         "category": "Process Improvement Idea",
-        "keywords": ["improve", "optimize", "efficiency", "productivity", "streamline", "automate", "reduce", "increase", "faster", "better", "easier", "suggestion", "idea", "recommend", "proposal", "enhancement", "upgrade", "modification", "change", "implement", "lean", "5s", "kaizen", "workflow", "process", "procedure", "method", "technique", "system", "digital", "technology", "training", "cross-train", "schedule", "organize", "standardize", "quality", "metrics"],
+        "keywords": ["improve", "optimize", "efficiency", "productivity", "streamline", "automate", "reduce", "increase", "faster", "better", "easier", "suggestion", "idea", "recommend", "proposal", "enhancement", "upgrade", "modification", "change", "implement", "lean", "5s", "kaizen", "workflow", "process", "procedure", "method", "technique", "system", "digital", "technology", "training", "cross-train", "schedule", "organize", "standardize", "quality", "metrics", "downtime", "setup time", "packaging process"],
         "examples": ["Suggest 5S to reduce downtime", "Optimize loading dock schedule", "Reduce setup time by organizing tools", "Implement 5S system in work area", "Streamline packaging process", "Cross-train operators for flexibility", "Digital work order system", "Barcode scanning for inventory", "Preventive maintenance schedule", "Quality metrics dashboard", "Energy-saving lighting upgrade", "Automated quality inspection", "Supplier quality scorecards", "Could we automate this repetitive task?", "What if we rearranged the workspace layout?"]
     },
     {
@@ -59,8 +59,8 @@ KNOWLEDGE_BASE = [
 # Rules for determining priority based on keywords.
 PRIORITY_RULES = {
     "critical_keywords": ["emergency", "fire", "explosion", "toxic", "chemical leak", "gas leak", "electrical shock", "electrocuted", "collapsed", "trapped", "unconscious", "bleeding", "severe injury", "broken bone", "ambulance", "hospital", "shutdown", "complete failure", "total breakdown", "stopped production", "line down", "plant shutdown", "evacuation", "hazmat"],
-    "high_keywords": ["danger", "hazard", "unsafe", "blocked exit", "missing guard", "exposed wire", "frayed cord", "overheating", "smoking", "sparking", "grinding noise", "violent vibration", "pressure buildup", "steam leak", "oil leak", "broken", "malfunction", "jam", "stuck", "won't start", "keeps stopping", "major issue", "production impact", "quality problem", "customer complaint"],
-    "medium_keywords": ["worn", "loose", "slow", "inconsistent", "needs repair", "needs maintenance", "replace soon", "calibration", "adjustment", "minor leak", "slight noise", "efficiency", "productivity", "improvement", "optimize", "streamline", "training needed", "outdated", "upgrade", "modification"],
+    "high_keywords": ["danger", "hazard", "unsafe", "blocked exit", "missing guard", "exposed wire", "frayed cord", "overheating", "smoking", "sparking", "grinding noise", "violent vibration", "pressure buildup", "steam leak", "oil leak", "broken", "malfunction", "jam", "stuck", "won't start", "keeps stopping", "major issue", "production impact", "quality problem", "customer complaint", "emergency stop", "risk", "injury", "guard rail"],
+    "medium_keywords": ["worn", "loose", "slow", "inconsistent", "needs repair", "needs maintenance", "replace soon", "calibration", "adjustment", "minor leak", "slight noise", "efficiency", "productivity", "improvement", "optimize", "streamline", "training needed", "outdated", "upgrade", "modification", "slipping", "conveyor belt"],
     "low_keywords": ["suggestion", "idea", "recommend", "could we", "what if", "maybe", "convenience", "comfort", "supplies", "breakroom", "parking", "lighting", "temperature", "coffee", "menu", "recognition", "nice to have", "future", "eventually", "when possible"]
 }
 
@@ -72,7 +72,7 @@ URGENCY_INDICATORS = {
 }
 
 # Global configuration constants
-SIMILARITY_THRESHOLD = 0.20
+SIMILARITY_THRESHOLD = 0.15
 DEFAULT_CATEGORY = "General_Feedback"
 MAX_TEXT_LENGTH = 5000
 
@@ -284,7 +284,7 @@ def handle_classify():
         return jsonify({"error": result.error}), 500
 
     # Convert confidence to an integer on a scale of 0-10
-    confidence_int = int(result.confidence * 10)
+    confidence_int = int(round(result.confidence * 10))
 
     # Manually construct the response dictionary to include duplicate keys
     result_dict = {
@@ -310,13 +310,16 @@ def home():
     <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Feedback Classification API</title><link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@300;400;600;700&display=swap" rel="stylesheet"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;line-height:1.7;color:#333;background-color:#f8f9fa}.header{background:linear-gradient(135deg,#1a5490 0%,#2d6aa3 100%);color:white;padding:3rem 1rem;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,.1)}.header h1{font-size:2.8rem;font-weight:700;margin-bottom:.5rem}.header p{font-size:1.2rem;opacity:.9;font-weight:300}.status-badge{display:inline-block;background:rgba(255,255,255,.15);padding:.5rem 1.2rem;border-radius:25px;font-size:.9rem;margin-top:1.5rem;border:1px solid rgba(255,255,255,.3);font-weight:600}.container{max-width:960px;margin:0 auto;padding:2rem 1rem}.section{background:white;margin-bottom:2.5rem;padding:2.5rem;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.07);border:1px solid #e9ecef}.section h2{color:#1a5490;font-size:2rem;font-weight:600;margin-bottom:1.5rem;padding-bottom:.8rem;border-bottom:2px solid #e9ecef}h3{color:#2d6aa3;font-size:1.4rem;margin:1.5rem 0 1rem 0;font-weight:600}p,li{color:#555;font-size:1rem}ul{list-style-position:inside;padding-left:1rem}code.inline{background:#e9ecef;padding:.2em .4em;margin:0;font-size:85%;border-radius:6px;font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;color:#c7254e}pre{background:#212529;color:#f8f9fa;padding:1.5rem;border-radius:8px;white-space:pre-wrap;word-wrap:break-word;font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace;font-size:.9rem;margin:1rem 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem}.card{padding:1.5rem;border-radius:8px;border-left:5px solid;transition:transform .2s ease,box-shadow .2s ease}.card:hover{transform:translateY(-3px);box-shadow:0 8px 20px rgba(0,0,0,.1)}.critical{border-color:#d90429;background:#fff1f2;color:#8c1c13}.high{border-color:#ffb703;background:#fffbeb;color:#b56213}.medium{border-color:#2a9d8f;background:#f0fdfa;color:#1e655d}.low{border-color:#6c757d;background:#f8f9fa;color:#343a40}footer{text-align:center;padding:2rem;color:#6c757d;font-size:.9rem}</style></head><body><header class="header"><h1>Feedback Classification & Prioritization API</h1><p>Advanced Classification & Prioritization &bull; Built for Manufacturing Excellence</p><div class="status-badge">API Status: Operational</div></header><main class="container"><section class="section"><h2>API Endpoint</h2><h3><code class="inline">POST /classify</code></h3><p>This endpoint analyzes the provided text and returns a detailed classification and priority assessment.</p><h3>Request Body</h3><p>The request must be a JSON object with a single key, <code class="inline">text</code>.</p><pre><code>{\n    "text": "The conveyor belt near station 4 is making a loud grinding noise and seems to be running slower than usual."\n}</code></pre><h3>Success Response (200 OK)</h3><p>A successful request returns a JSON object with the classification details, including duplicate keys for compatibility.</p><pre><code>{\n    "category": "Machine/Equipment Issue",\n    "autocategory": "Machine/Equipment Issue",\n    "priority": "high",\n    "autopriority": "high",\n    "confidence": 0.875,\n    "confidence_score": 0.875,\n    "priority_score": 5.85,\n    ...\n}</code></pre></section><section class="section"><h2>Possible Categories</h2><div class="grid"><div class="card low"><h4>Safety Concern</h4></div><div class="card low"><h4>Machine/Equipment Issue</h4></div><div class="card low"><h4>Process Improvement Idea</h4></div><div class="card low"><h4>Other</h4></div></div></section><section class="section"><h2>Priority Levels</h2><div class="grid"><div class="card critical"><h4>Critical</h4><p>Immediate threats to safety or production.</p></div><div class="card high"><h4>High</h4><p>Serious issues requiring urgent attention.</p></div><div class="card medium"><h4>Medium</h4><p>Moderate issues that should be addressed soon.</p></div><div class="card low"><h4>Low</h4><p>Suggestions and non-urgent requests.</p></div></div></section></main><footer>Feedback Classification API &copy; 2025</footer></body></html>
     """
 
-# ==============================================================================
-# 6. MAIN EXECUTION BLOCK
-# ==============================================================================
+**Regarding the possibility of the code "learning":**
 
-if __name__ == "__main__":
-    # Get port from environment variable or default to 8080 for local development
-    port = int(os.environ.get("PORT", 8080))
-    # Run the app, listening on all network interfaces
-    # Set debug=False for production environments
-    app.run(host="0.0.0.0", port=port, debug=False)
+Yes, it is possible, but it would require a significant change to the application's architecture.
+
+The current code uses a **rule-based** or **heuristic** model. This type of model relies on the predefined `KNOWLEDGE_BASE` and a set of explicit rules (e.g., keyword matching and similarity scores) to make decisions. It does not "learn" or adapt on its own.
+
+A learning model would be a **machine learning (ML)** model. Instead of a hard-coded `KNOWLEDGE_BASE`, an ML model is trained on a large dataset of classified examples. It learns patterns and relationships in the text to make predictions.
+
+Here's a quick comparison:
+* **Heuristic Model (Current Code):** Simple, fast, easy to interpret. Its performance is directly tied to the quality of the `KNOWLEDGE_BASE`.
+* **Machine Learning Model:** Can discover complex patterns, generalize better to new data, and improve over time. However, it requires a large, high-quality dataset for training and is more complex to build and maintain.
+
+For now, the most effective way to improve this application is to continue refining and expanding the `KNOWLEDGE_BASE` based on your feedback and incoming submissions.
