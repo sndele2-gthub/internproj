@@ -148,11 +148,15 @@ def validate_request_data(data: Optional[Dict]) -> tuple[bool, str]:
 
 @app.errorhandler(400)
 def bad_request(error):
-    # (Unchanged...)
+    """Handle bad request errors."""
+    return jsonify({"error": "Bad request", "message": str(error)}), 400
 
 @app.errorhandler(500)
 def internal_error(error):
-    # (Unchanged...)
+    """Handle internal server errors."""
+    logger.error(f"Internal server error: {error}")
+    return jsonify({"error": "Internal server error"}), 500
+
 
 @app.route("/")
 def home():
@@ -190,3 +194,4 @@ def classify():
 if __name__ == "__main__":
     logger.info("Starting Enhanced Feedback Classification API...")
     app.run(host="0.0.0.0", port=5000, debug=False)
+
