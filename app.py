@@ -283,8 +283,8 @@ def handle_classify():
     if result.error:
         return jsonify({"error": result.error}), 500
 
-    # Convert confidence to an integer percentage
-    confidence_int = int(result.confidence * 100)
+    # Convert confidence to an integer on a scale of 0-10
+    confidence_int = int(result.confidence * 10)
 
     # Manually construct the response dictionary to include duplicate keys
     result_dict = {
