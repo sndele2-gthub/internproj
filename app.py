@@ -6,6 +6,7 @@ import math
 from collections import Counter
 from typing import Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass
+from enum import Enum
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -13,7 +14,14 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# --- Enhanced Knowledge Base with Keywords ---
+class Priority(Enum):
+    """Priority levels for feedback items."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+# --- Enhanced Knowledge Base with Keywords and Priority Rules ---
 KNOWLEDGE_BASE = [
     {
         "category": "Safety Concern",
@@ -128,8 +136,52 @@ KNOWLEDGE_BASE = [
     }
 ]
 
+# Priority rules based on keywords and severity indicators
+PRIORITY_RULES = {
+    # Critical priority keywords - immediate safety risks or production shutdown
+    "critical_keywords": [
+        "emergency", "fire", "explosion", "toxic", "chemical leak", "gas leak",
+        "electrical shock", "electrocuted", "collapsed", "trapped", "unconscious",
+        "bleeding", "severe injury", "broken bone", "ambulance", "hospital",
+        "shutdown", "complete failure", "total breakdown", "stopped production",
+        "line down", "plant shutdown", "evacuation", "hazmat"
+    ],
+    
+    # High priority keywords - serious safety concerns or major equipment issues
+    "high_keywords": [
+        "danger", "hazard", "unsafe", "blocked exit", "missing guard", "exposed wire",
+        "frayed cord", "overheating", "smoking", "sparking", "grinding noise",
+        "violent vibration", "pressure buildup", "steam leak", "oil leak",
+        "broken", "malfunction", "jam", "stuck", "won't start", "keeps stopping",
+        "major issue", "production impact", "quality problem", "customer complaint"
+    ],
+    
+    # Medium priority keywords - moderate concerns requiring attention
+    "medium_keywords": [
+        "worn", "loose", "slow", "inconsistent", "needs repair", "needs maintenance",
+        "replace soon", "calibration", "adjustment", "minor leak", "slight noise",
+        "efficiency", "productivity", "improvement", "optimize", "streamline",
+        "training needed", "outdated", "upgrade", "modification"
+    ],
+    
+    # Low priority keywords - general requests and minor issues
+    "low_keywords": [
+        "suggestion", "idea", "recommend", "could we", "what if", "maybe",
+        "convenience", "comfort", "supplies", "breakroom", "parking",
+        "lighting", "temperature", "coffee", "menu", "recognition",
+        "nice to have", "future", "eventually", "when possible"
+    ]
+}
+
+# Urgency multipliers based on text indicators
+URGENCY_INDICATORS = {
+    "immediate": ["now", "immediately", "asap", "urgent", "emergency", "right away", "critical"],
+    "soon": ["soon", "quickly", "fast", "today", "this week", "needs attention"],
+    "eventually": ["eventually", "future", "someday", "when possible", "nice to have"]
+}
+
 # Configuration
-SIMILARITY_THRESHOLD = 0.35  # Lowered for more fuzzy matching
+SIMILARITY_THRESHOLD = 0.35
 KEYWORD_THRESHOLD = 0.6
 DEFAULT_CATEGORY = "General_Feedback"
 MAX_TEXT_LENGTH = 5000
@@ -138,11 +190,160 @@ MAX_TEXT_LENGTH = 5000
 class ClassificationResult:
     """Data class for classification results."""
     category: str
+    priority: str
     confidence: float
+    priority_score: float
     matched_example: Optional[str]
     keyword_matches: List[str]
+    priority_factors: List[str]
     similarity_scores: Dict[str, float]
     error: Optional[str] = None
+
+class PriorityEngine:
+    """Handles priority assignment based on content analysis."""
+    
+    def __init__(self):
+        self.priority_rules = PRIORITY_RULES
+        self.urgency_indicators = URGENCY_INDICATORS
+    
+    def calculate_priority(self, text: str, category: str, text_keywords: Set[str]) -> Tuple[Priority, float, List[str]]:
+        """
+        Calculate priority based on text content, category, and keywords.
+        Returns: (Priority, priority_score, priority_factors)
+        """
+        priority_factors = []
+        base_score = 0.0
+        
+        # Normalize text for analysis
+        normalized_text = text.lower()
+        
+        # 1. Check for critical keywords first
+        critical_matches = self._check_keyword_matches(normalized_text, text_keywords, 
+                                                     self.priority_rules["critical_keywords"])
+        if critical_matches:
+            priority_factors.extend([f"Critical: {match}" for match in critical_matches])
+            base_score += 4.0
+        
+        # 2. Check for high priority keywords
+        high_matches = self._check_keyword_matches(normalized_text, text_keywords,
+                                                  self.priority_rules["high_keywords"])
+        if high_matches:
+            priority_factors.extend([f"High: {match}" for match in high_matches])
+            base_score += 3.0
+        
+        # 3. Check for medium priority keywords
+        medium_matches = self._check_keyword_matches(normalized_text, text_keywords,
+                                                    self.priority_rules["medium_keywords"])
+        if medium_matches:
+            priority_factors.extend([f"Medium: {match}" for match in medium_matches])
+            base_score += 2.0
+        
+        # 4. Check for low priority keywords
+        low_matches = self._check_keyword_matches(normalized_text, text_keywords,
+                                                 self.priority_rules["low_keywords"])
+        if low_matches:
+            priority_factors.extend([f"Low: {match}" for match in low_matches])
+            base_score += 1.0
+        
+        # 5. Apply category-based priority adjustments
+        category_multiplier = self._get_category_multiplier(category)
+        base_score *= category_multiplier
+        if category_multiplier != 1.0:
+            priority_factors.append(f"Category adjustment: {category} (x{category_multiplier})")
+        
+        # 6. Check for urgency indicators
+        urgency_multiplier = self._check_urgency_indicators(normalized_text)
+        base_score *= urgency_multiplier
+        if urgency_multiplier != 1.0:
+            priority_factors.append(f"Urgency indicator (x{urgency_multiplier})")
+        
+        # 7. Check for quantity/severity indicators
+        severity_multiplier = self._check_severity_indicators(normalized_text)
+        base_score *= severity_multiplier
+        if severity_multiplier != 1.0:
+            priority_factors.append(f"Severity indicator (x{severity_multiplier})")
+        
+        # 8. Determine final priority level
+        priority = self._score_to_priority(base_score)
+        
+        # Ensure we have at least one priority factor
+        if not priority_factors:
+            priority_factors.append(f"Default categorization based on content analysis")
+        
+        return priority, round(base_score, 2), priority_factors
+    
+    def _check_keyword_matches(self, text: str, text_keywords: Set[str], priority_keywords: List[str]) -> List[str]:
+        """Check for matches between text and priority keywords."""
+        matches = []
+        
+        for priority_keyword in priority_keywords:
+            # Check for exact phrase match in text
+            if priority_keyword in text:
+                matches.append(priority_keyword)
+                continue
+            
+            # Check for individual word matches in extracted keywords
+            priority_words = set(priority_keyword.split())
+            if priority_words.intersection(text_keywords):
+                matches.append(priority_keyword)
+        
+        return matches
+    
+    def _get_category_multiplier(self, category: str) -> float:
+        """Get priority multiplier based on category."""
+        category_multipliers = {
+            "Safety Concern": 1.5,  # Safety issues get higher priority
+            "Machine/Equipment Issue": 1.3,  # Equipment issues impact production
+            "Process Improvement Idea": 0.8,  # Improvements are generally lower priority
+            "Other": 0.7,  # General requests are typically lower priority
+            "General_Feedback": 0.5
+        }
+        return category_multipliers.get(category, 1.0)
+    
+    def _check_urgency_indicators(self, text: str) -> float:
+        """Check for urgency indicators in text."""
+        for urgency_level, indicators in self.urgency_indicators.items():
+            for indicator in indicators:
+                if indicator in text:
+                    if urgency_level == "immediate":
+                        return 1.5
+                    elif urgency_level == "soon":
+                        return 1.2
+                    elif urgency_level == "eventually":
+                        return 0.8
+        return 1.0
+    
+    def _check_severity_indicators(self, text: str) -> float:
+        """Check for severity indicators that might affect priority."""
+        severity_indicators = {
+            "multiple": ["multiple", "several", "many", "various", "numerous"],
+            "recurring": ["keeps", "always", "constantly", "repeatedly", "continuous"],
+            "worsening": ["getting worse", "deteriorating", "failing", "breaking down"],
+            "complete": ["completely", "totally", "entirely", "won't work", "dead"]
+        }
+        
+        multiplier = 1.0
+        for severity_type, indicators in severity_indicators.items():
+            for indicator in indicators:
+                if indicator in text:
+                    if severity_type in ["complete", "worsening"]:
+                        multiplier *= 1.3
+                    elif severity_type in ["recurring", "multiple"]:
+                        multiplier *= 1.2
+                    break
+        
+        return multiplier
+    
+    def _score_to_priority(self, score: float) -> Priority:
+        """Convert numerical score to priority level."""
+        if score >= 6.0:
+            return Priority.CRITICAL
+        elif score >= 4.0:
+            return Priority.HIGH
+        elif score >= 2.0:
+            return Priority.MEDIUM
+        else:
+            return Priority.LOW
 
 class TextProcessor:
     """Handles text preprocessing and normalization."""
@@ -249,7 +450,7 @@ class TextProcessor:
         return dot_product / (magnitude1 * magnitude2)
 
 class EnhancedFeedbackClassifier:
-    """Enhanced feedback classifier with multiple similarity algorithms."""
+    """Enhanced feedback classifier with priority assignment."""
 
     def __init__(self, knowledge_base: List[Dict], 
                  similarity_threshold: float = SIMILARITY_THRESHOLD,
@@ -258,7 +459,8 @@ class EnhancedFeedbackClassifier:
         self.similarity_threshold = similarity_threshold
         self.keyword_threshold = keyword_threshold
         self.text_processor = TextProcessor()
-        logger.info(f"Initialized enhanced classifier with {len(knowledge_base)} categories")
+        self.priority_engine = PriorityEngine()
+        logger.info(f"Initialized enhanced classifier with {len(knowledge_base)} categories and priority engine")
 
     def _calculate_keyword_score(self, text_keywords: Set[str], category_keywords: List[str]) -> Tuple[float, List[str]]:
         """Calculate keyword matching score."""
@@ -319,14 +521,17 @@ class EnhancedFeedbackClassifier:
 
     def classify(self, text: str) -> ClassificationResult:
         """
-        Enhanced classification with multiple algorithms and fuzzy matching.
+        Enhanced classification with priority assignment.
         """
         if not text or not text.strip():
             return ClassificationResult(
                 category=DEFAULT_CATEGORY,
+                priority=Priority.LOW.value,
                 confidence=0.0,
+                priority_score=0.0,
                 matched_example=None,
                 keyword_matches=[],
+                priority_factors=[],
                 similarity_scores={},
                 error="Empty text provided"
             )
@@ -374,11 +579,19 @@ class EnhancedFeedbackClassifier:
                 matched_example = None
                 keyword_matches = []
 
+            # Calculate priority
+            priority, priority_score, priority_factors = self.priority_engine.calculate_priority(
+                text, category_name, text_keywords
+            )
+
             return ClassificationResult(
                 category=category_name,
+                priority=priority.value,
                 confidence=round(confidence, 3),
+                priority_score=priority_score,
                 matched_example=matched_example,
                 keyword_matches=keyword_matches,
+                priority_factors=priority_factors,
                 similarity_scores={k: round(v, 3) for k, v in category_scores.items()},
                 error=None
             )
@@ -387,9 +600,12 @@ class EnhancedFeedbackClassifier:
             logger.error(f"Error during enhanced classification: {e}")
             return ClassificationResult(
                 category=DEFAULT_CATEGORY,
+                priority=Priority.LOW.value,
                 confidence=0.0,
+                priority_score=0.0,
                 matched_example=None,
                 keyword_matches=[],
+                priority_factors=[],
                 similarity_scores={},
                 error="Classification error occurred"
             )
@@ -434,7 +650,7 @@ def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Feedback Classification API - Smurfit WestRock</title>
+        <title>Feedback Classification & Prioritization API - Smurfit WestRock</title>
         <style>
             * {
                 margin: 0;
@@ -562,390 +778,23 @@ def home():
                 font-size: 0.8rem;
             }
 
-            .categories-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-                gap: 1.5rem;
-                margin: 2rem 0;
-            }
-
-            .category-card {
-                background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
-                padding: 1.5rem;
-                border-radius: 12px;
-                border-left: 4px solid #1a5490;
-                transition: all 0.3s ease;
-            }
-
-            .category-card:hover {
-                transform: translateX(4px);
-                box-shadow: 0 4px 20px rgba(26, 84, 144, 0.15);
-            }
-
-            .category-card h4 {
-                color: #1a5490;
-                font-weight: 600;
-                margin-bottom: 0.5rem;
-            }
-
-            .category-card p {
-                color: #666;
-                font-size: 0.9rem;
-            }
-
-            .features-grid {
+            .priority-grid {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
                 gap: 1.5rem;
                 margin: 2rem 0;
             }
 
-            .feature-item {
-                display: flex;
-                align-items: flex-start;
-                gap: 1rem;
-                padding: 1rem;
-                background: rgba(26, 84, 144, 0.05);
-                border-radius: 8px;
-                transition: background 0.3s ease;
-            }
-
-            .feature-item:hover {
-                background: rgba(26, 84, 144, 0.1);
-            }
-
-            .feature-icon {
-                width: 40px;
-                height: 40px;
-                background: #1a5490;
-                border-radius: 8px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                color: white;
-                font-weight: bold;
-                flex-shrink: 0;
-            }
-
-            .code-block {
-                background: #2d3748;
-                color: #e2e8f0;
-                padding: 1.5rem;
-                border-radius: 8px;
-                margin: 1rem 0;
-                font-family: 'Courier New', monospace;
-                overflow-x: auto;
-                border-left: 4px solid #1a5490;
-            }
-
-            .endpoints-list {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                gap: 1rem;
-                margin: 1.5rem 0;
-            }
-
-            .endpoint-item {
-                background: linear-gradient(135deg, #1a5490 0%, #2d6aa3 100%);
-                color: white;
-                padding: 1rem;
-                border-radius: 8px;
-                text-align: center;
-                font-weight: 500;
-                transition: transform 0.3s ease;
-            }
-
-            .endpoint-item:hover {
-                transform: scale(1.05);
-            }
-
-            .endpoint-item code {
-                display: block;
-                font-size: 1.1rem;
-                margin-bottom: 0.5rem;
-            }
-
-            .footer {
-                background: #1a5490;
-                color: white;
-                text-align: center;
-                padding: 2rem 0;
-                margin-top: 3rem;
-            }
-
-            .sustainability-note {
-                background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-                color: white;
+            .priority-card {
                 padding: 1.5rem;
                 border-radius: 12px;
-                margin: 2rem 0;
-                text-align: center;
+                border-left: 4px solid;
+                transition: all 0.3s ease;
             }
 
-            @media (max-width: 768px) {
-                .header-content {
-                    text-align: center;
-                }
-
-                .title-section h1 {
-                    font-size: 2rem;
-                }
-
-                .container {
-                    padding: 0 1rem;
-                }
-
-                .section {
-                    padding: 1.5rem;
-                }
+            .priority-card:hover {
+                transform: translateX(4px);
+                box-shadow: 0 4px 20px rgba(0,0,0,0.15);
             }
-        </style>
-    </head>
-    <body>
-        <header class="header">
-            <div class="container">
-                <div class="header-content">
-                    <div class="logo-section">
-                        <div class="logo">SW</div>
-                        <div class="title-section">
-                            <h1>Feedback Classification API</h1>
-                            <p class="subtitle">Advanced Classification • Built for Manufacturing Excellence</p>
-                        </div>
-                    </div>
-                    <div class="status-badge">
-                        ✅ System Online
-                    </div>
-                </div>
-            </div>
-        </header>
 
-        <main class="main-content">
-            <div class="container">
-                <div class="sustainability-note">
-                    <h3>🌱 Supporting Sustainable Operations</h3>
-                    <p>This system helps optimize workplace feedback processing, supporting our commitment to operational efficiency and continuous improvement in sustainable packaging solutions.</p>
-                </div>
-
-                <div class="section">
-                    <h2><span class="icon">🎯</span> Classification Categories</h2>
-                    <p>Our advanced system automatically categorizes workplace feedback into four key areas:</p>
-                    <div class="categories-grid">
-                        <div class="category-card">
-                            <h4>🛡️ Safety Concern</h4>
-                            <p>Issues related to workplace safety, hazards, emergency equipment, and protective measures</p>
-                        </div>
-                        <div class="category-card">
-                            <h4>⚙️ Machine/Equipment Issue</h4>
-                            <p>Problems with machinery, equipment malfunctions, maintenance needs, and technical issues</p>
-                        </div>
-                        <div class="category-card">
-                            <h4>💡 Process Improvement Idea</h4>
-                            <p>Suggestions for optimizing processes, increasing efficiency, and implementing best practices</p>
-                        </div>
-                        <div class="category-card">
-                            <h4>📋 Other</h4>
-                            <p>General requests, facility issues, training needs, and other workplace feedback</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="section">
-                    <h2><span class="icon">🚀</span> Advanced Features</h2>
-                    <div class="features-grid">
-                        <div class="feature-item">
-                            <div class="feature-icon">🔤</div>
-                            <div>
-                                <h4>Fuzzy Matching</h4>
-                                <p>Handles misspellings and variations in language</p>
-                            </div>
-                        </div>
-                        <div class="feature-item">
-                            <div class="feature-icon">🧠</div>
-                            <div>
-                                <h4>Smart Recognition</h4>
-                                <p>Uses multiple sophisticated algorithms for accurate classification</p>
-                            </div>
-                        </div>
-                        <div class="feature-item">
-                            <div class="feature-icon">📊</div>
-                            <div>
-                                <h4>Confidence Scoring</h4>
-                                <p>Provides detailed confidence metrics for each classification</p>
-                            </div>
-                        </div>
-                        <div class="feature-item">
-                            <div class="feature-icon">🔍</div>
-                            <div>
-                                <h4>Keyword Analysis</h4>
-                                <p>Identifies and matches relevant keywords and phrases</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="section">
-                    <h2><span class="icon">🔧</span> API Usage</h2>
-                    <h3>Making a Classification Request</h3>
-                    <p>Send a POST request to <code>/classify</code> with your feedback text:</p>
-                    <div class="code-block">
-{
-  "text": "The conveyor belt is making strange noises and needs maintenance"
-}</div>
-
-                    <h3>Response Format</h3>
-                    <p>The API returns detailed classification results:</p>
-                    <div class="code-block">
-{
-  "category": "Machine/Equipment Issue",
-  "confidence": 0.847,
-  "matched_example": "Conveyor belt is slipping",
-  "keyword_matches": ["conveyor", "maintenance", "noise"],
-  "similarity_scores": {
-    "Safety Concern": 0.234,
-    "Machine/Equipment Issue": 0.847,
-    "Process Improvement Idea": 0.156,
-    "Other": 0.089
-  }
-}</div>
-                </div>
-
-                <div class="section">
-                    <h2><span class="icon">🌐</span> Available Endpoints</h2>
-                    <div class="endpoints-list">
-                        <div class="endpoint-item">
-                            <code>/classify</code>
-                            <div>Classify feedback text</div>
-                        </div>
-                        <div class="endpoint-item">
-                            <code>/categories</code>
-                            <div>View all categories</div>
-                        </div>
-                        <div class="endpoint-item">
-                            <code>/test</code>
-                            <div>Test the classifier</div>
-                        </div>
-                        <div class="endpoint-item">
-                            <code>/health</code>
-                            <div>System health check</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </main>
-
-        <footer class="footer">
-            <div class="container">
-                <p>&copy; 2025 Smurfit WestRock • Advanced Feedback Classification System</p>
-                <p>Supporting operational excellence in sustainable packaging solutions</p>
-                <p style="font-size: 0.8rem; opacity: 0.7; margin-top: 1rem;">Built by Sean</p>
-            </div>
-        </footer>
-    </body>
-    </html>
-    """
-
-@app.route("/health", methods=["GET"])
-def health_check():
-    """Health check endpoint."""
-    return jsonify({
-        "status": "healthy",
-        "categories_available": len(KNOWLEDGE_BASE),
-        "version": "2.0.0",
-        "features": [
-            "fuzzy_matching",
-            "spelling_correction", 
-            "keyword_extraction",
-            "multiple_similarity_algorithms"
-        ]
-    })
-
-@app.route("/categories", methods=["GET"])
-def get_categories():
-    """Get available categories and their examples."""
-    categories = []
-    for item in KNOWLEDGE_BASE:
-        categories.append({
-            "category": item["category"],
-            "keyword_count": len(item.get("keywords", [])),
-            "example_count": len(item["examples"]),
-            "sample_keywords": item.get("keywords", [])[:5],
-            "sample_examples": item["examples"][:3]
-        })
-    return jsonify({"categories": categories})
-
-@app.route("/test", methods=["GET"])
-def test_classifier():
-    """Test endpoint with sample inputs."""
-    test_cases = [
-        "The conveyor belt is making weird noises",
-        "We need better safety equipment",
-        "Could we automate this process?",
-        "The break room coffee machine is broken",
-        "Emergency exit is blocked by boxes",
-        "Machien keeps jamming every few hours",  # Intentional misspelling
-        "Suggest implementing lean manufacturing"
-    ]
-
-    results = []
-    for test_text in test_cases:
-        result = classifier.classify(test_text)
-        results.append({
-            "input": test_text,
-            "classification": {
-                "category": result.category,
-                "confidence": result.confidence,
-                "keyword_matches": result.keyword_matches[:3],  # Limit for readability
-                "matched_example": result.matched_example
-            }
-        })
-
-    return jsonify({"test_results": results})
-
-@app.route("/classify", methods=["POST"])
-def classify():
-    """Classify feedback text with enhanced algorithms."""
-    try:
-        # Get and validate request data
-        data = request.get_json()
-        is_valid, error_message = validate_request_data(data)
-
-        if not is_valid:
-            logger.warning(f"Invalid request: {error_message}")
-            return jsonify({"error": error_message}), 400
-
-        text = data["text"].strip()
-        logger.info(f"Classifying feedback: '{text[:50]}...' ({len(text)} chars)")
-
-        # Classify the text
-        result = classifier.classify(text)
-
-        # Log the classification result
-        logger.info(f"Classification result: {result.category} (confidence: {result.confidence})")
-
-        # Return detailed result
-        response = {
-            "category": result.category,
-            "confidence": result.confidence,
-            "matched_example": result.matched_example,
-            "keyword_matches": result.keyword_matches,
-            "similarity_scores": result.similarity_scores,
-            "error": result.error
-        }
-
-        return jsonify(response)
-
-    except Exception as e:
-        logger.error(f"Unexpected error in classify endpoint: {e}")
-        return jsonify({
-            "error": "Internal server error",
-            "category": DEFAULT_CATEGORY,
-            "confidence": 0.0,
-            "matched_example": None,
-            "keyword_matches": [],
-            "similarity_scores": {}
-        }), 500
-
-if __name__ == "__main__":
-    logger.info("Starting Enhanced Feedback Classification API...")
-    app.run(host="0.0.0.0", port=5000, debug=False)
-    app.run(host="0.0.0.0", port=81, debug=False)
+            .critical
