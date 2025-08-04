@@ -850,4 +850,33 @@ def home():
     </body>
     </html>
     """
+@app.route("/classify", methods=["POST"])
+def classify():
+    """API endpoint for classifying and prioritizing feedback."""
+    data = request.get_json(force=True, silent=True)
+    is_valid, error_message = validate_request_data(data)
+    if not is_valid:
+        return jsonify({"error": error_message}), 400
+
+    text = data.get("text", "")
+    result = classifier.classify(text)
+
+    # Convert dataclass to dict for JSON response
+    result_dict = {
+        "category": result.category,
+        "priority": result.priority,
+        "confidence": result.confidence,
+        "priority_score": result.priority_score,
+        "matched_example": result.matched_example,
+        "keyword_matches": result.keyword_matches,
+        "priority_factors": result.priority_factors,
+        "similarity_scores": result.similarity_scores,
+        "error": result.error,
+    }
+    return jsonify(result_dict), 200
+
+if __name__ == "__main__":
+    logger.info("Starting Enhanced Feedback Classification API...")
+    app.run(host="0.0.0.0", port=5000, debug=False)
+
 
