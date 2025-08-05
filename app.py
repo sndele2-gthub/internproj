@@ -55,7 +55,7 @@ PRIORITY_KEYWORDS = {
     "low": ["suggestion", "idea", "recommend", "could we", "supplies", "comfort", "convenience", "nice to have", "future"]
 }
 
-SIMILARITY_THRESHOLD = 0.3  # Increased for better confidence scoring
+SIMILARITY_THRESHOLD = 0.15  # Balanced threshold for category detection
 MAX_TEXT_LENGTH = 5000
 
 # ==============================================================================
@@ -109,41 +109,46 @@ class PriorityEngine:
 
     def calculate_priority(self, text: str, category: str, text_keywords: Set[str]) -> Tuple[Priority, float, List[str]]:
         normalized_text = text.lower()
-        base_score = 1.0  # Start with base score
+        base_score = 0.5  # Lower starting point
         priority_factors = []
         
-        # Check for priority keywords with more balanced scoring
+        # Check for priority keywords with better balanced scoring
         critical_matches = self._find_matches(normalized_text, text_keywords, self.priority_keywords["critical"])
         if critical_matches:
-            base_score += 3.0
+            base_score += 4.0  # Strong boost for critical
             priority_factors.extend([f"Critical: {match}" for match in critical_matches[:2]])
         
         high_matches = self._find_matches(normalized_text, text_keywords, self.priority_keywords["high"])
         if high_matches:
-            base_score += 2.0
+            base_score += 2.5  # Good boost for high
             priority_factors.extend([f"High: {match}" for match in high_matches[:2]])
         
         medium_matches = self._find_matches(normalized_text, text_keywords, self.priority_keywords["medium"])
         if medium_matches:
-            base_score += 1.0
+            base_score += 1.5  # Moderate boost for medium
             priority_factors.extend([f"Medium: {match}" for match in medium_matches[:2]])
         
         low_matches = self._find_matches(normalized_text, text_keywords, self.priority_keywords["low"])
         if low_matches:
-            base_score += 0.5
+            base_score += 0.8  # Small boost for low
             priority_factors.extend([f"Low: {match}" for match in low_matches[:2]])
 
-        # Apply more conservative category multipliers
+        # Apply category multipliers with more impact
         category_multiplier = self._get_category_multiplier(category)
         if category_multiplier != 1.0:
             base_score *= category_multiplier
             priority_factors.append(f"Category: {category} (×{category_multiplier})")
 
-        # Check urgency indicators with reduced impact
+        # Check urgency indicators
         urgency_multiplier = self._check_urgency(normalized_text)
         if urgency_multiplier != 1.0:
             base_score *= urgency_multiplier
             priority_factors.append(f"Urgency (×{urgency_multiplier})")
+
+        # Ensure minimum score for safety and equipment issues
+        if category in ["Safety Concern", "Machine/Equipment Issue"] and base_score < 1.5:
+            base_score = 1.5
+            priority_factors.append("Minimum priority for safety/equipment")
 
         if not priority_factors:
             priority_factors.append("Default priority assignment")
@@ -159,8 +164,8 @@ class PriorityEngine:
 
     def _get_category_multiplier(self, category: str) -> float:
         multipliers = {
-            "Safety Concern": 1.3,
-            "Machine/Equipment Issue": 1.1, 
+            "Safety Concern": 1.5,      # Higher for safety
+            "Machine/Equipment Issue": 1.3,  # Higher for equipment 
             "Process Improvement Idea": 0.9,
             "Other": 0.8
         }
@@ -177,12 +182,12 @@ class PriorityEngine:
         return 1.0
 
     def _score_to_priority(self, score: float) -> Priority:
-        # More balanced priority thresholds
-        if score >= 5.5:
+        # Better balanced priority thresholds
+        if score >= 4.5:
             return Priority.CRITICAL
-        elif score >= 4.0:
+        elif score >= 3.0:
             return Priority.HIGH
-        elif score >= 2.5:
+        elif score >= 1.8:
             return Priority.MEDIUM
         else:
             return Priority.LOW
@@ -222,8 +227,12 @@ class FeedbackClassifier:
                 best_example_score = max(example_scores) if example_scores else 0.0
                 best_example = item['examples'][example_scores.index(best_example_score)] if example_scores else None
                 
-                # Combined score with improved weighting
-                combined_score = (keyword_score * 0.6) + (best_example_score * 0.4)
+                # Combined score with improved weighting for better category detection
+                combined_score = (keyword_score * 0.7) + (best_example_score * 0.3)
+                
+                # Boost score if we have both keyword and example matches
+                if keyword_score > 0 and best_example_score > 0:
+                    combined_score *= 1.2
                 scores[category] = combined_score
                 best_examples[category] = best_example
 
@@ -231,16 +240,21 @@ class FeedbackClassifier:
             best_category = max(scores.keys(), key=lambda k: scores[k])
             confidence = scores[best_category]
 
-            # Improved confidence scoring
+            # Improved confidence scoring with better range distribution
             if confidence < self.similarity_threshold:
                 category_name = "Other"
                 matched_example = None
                 keyword_matches = []
+                # Boost confidence slightly for Other category to improve scores
+                confidence = min(0.4, confidence + 0.1)
             else:
                 category_name = best_category
                 matched_example = best_examples[best_category]
                 item = next(i for i in self.knowledge_base if i['category'] == category_name)
                 keyword_matches = list(text_keywords.intersection(set(item.get('keywords', []))))
+                # Boost confidence for good matches
+                if confidence > 0.3:
+                    confidence = min(1.0, confidence * 1.2)
 
             # Calculate priority
             priority, priority_score, priority_factors = self.priority_engine.calculate_priority(
@@ -296,8 +310,8 @@ def handle_classify():
     if result.error:
         return jsonify({"error": result.error}), 500
 
-    # Convert confidence to 0-10 scale
-    confidence_int = max(0, min(10, int(round(result.confidence * 10))))
+    # Convert confidence to 0-10 scale with better distribution
+    confidence_int = max(1, min(10, int(round(result.confidence * 12))))
 
     return jsonify({
         "category": result.category,
