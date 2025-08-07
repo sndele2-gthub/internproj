@@ -1,6 +1,5 @@
 import os
 import re
-import math
 import difflib
 import logging
 from collections import Counter
@@ -9,14 +8,9 @@ from dataclasses import dataclass
 from enum import Enum
 from flask import Flask, request, jsonify
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
-
-# ==============================================================================
-# CONFIGURATION AND DATA
-# ==============================================================================
 
 class Priority(Enum):
     LOW = "Low"
@@ -24,45 +18,47 @@ class Priority(Enum):
     HIGH = "High"
     CRITICAL = "Critical"
 
-# Enhanced knowledge base with more comprehensive keywords and patterns
-KNOWLEDGE_BASE = [
-    {
-        "category": "Safety Concern",
-        "keywords": ["safety", "emergency", "danger", "hazard", "risk", "injury", "accident", "unsafe", "spill", "leak", "fire", "toxic", "chemical", "guard", "protective", "first aid", "evacuation", "blocked", "exit", "warning", "slip", "fall", "cut", "burn", "electrical", "shock", "ppe", "helmet", "gloves", "goggles", "mask", "emergency stop", "guard rail", "loose", "unstable", "tripping", "crush", "exposed", "sharp", "hot", "hurt", "injured", "pain", "blood", "broken bone", "unconscious", "trapped", "smoking", "sparks", "gas", "fumes", "ventilation", "lockout", "tagout", "confined space"],
-        "examples": ["Emergency exit is blocked", "Chemical spill in storage area", "Guard rail is loose and unsafe", "Workers not wearing proper PPE", "Electrical cord is frayed", "Floor is wet without warning signs", "Safety valve is not working", "Emergency stop button broken"]
+# Streamlined knowledge base focused on key indicators
+KNOWLEDGE_BASE = {
+    "Safety Concern": {
+        "keywords": ["safety", "danger", "hazard", "unsafe", "emergency", "injury", "accident", "risk", "fire", "toxic", "chemical", "spill", "leak", "blocked", "exit", "fall", "cut", "burn", "electrical", "shock", "ppe", "hurt", "injured", "blood", "unconscious", "trapped", "evacuation"],
+        "critical_words": ["emergency", "fire", "explosion", "toxic", "unconscious", "trapped", "evacuation", "severe", "major", "critical"],
+        "high_words": ["danger", "hazard", "unsafe", "blocked exit", "injury", "accident", "electrical", "shock", "burn"],
+        "medium_words": ["safety", "risk", "ppe", "protective", "guard", "warning"],
+        "examples": ["Emergency exit blocked", "Chemical spill", "Worker injured", "Electrical hazard"]
     },
-    {
-        "category": "Machine/Equipment Issue", 
-        "keywords": ["machine", "equipment", "conveyor", "motor", "pump", "compressor", "hydraulic", "mechanical", "broken", "malfunction", "jam", "stuck", "slow", "fast", "vibration", "noise", "leak", "pressure", "temperature", "maintenance", "repair", "belt", "chain", "gear", "bearing", "sensor", "overheating", "grinding", "slipping", "down", "stopped", "failure", "error", "alarm", "warning light", "calibration", "adjustment", "replacement", "part", "component", "system", "control", "panel", "display", "indicator", "gauge", "meter", "valve", "cylinder", "pneumatic", "electrical", "wiring", "connection", "coupling", "shaft", "pulley", "roller", "switch", "button", "lever", "handle", "tool", "die", "mold", "cutting", "drilling", "welding", "assembly", "production line", "workstation"],
-        "examples": ["Conveyor belt is slipping badly", "Machine making loud grinding noise", "Equipment keeps jamming frequently", "Motor is overheating during operation", "Hydraulic system has slow response", "Sensor readings seem inaccurate", "Production line is down", "Control panel showing errors"]
+    "Machine/Equipment Issue": {
+        "keywords": ["machine", "equipment", "conveyor", "motor", "pump", "broken", "malfunction", "jam", "stuck", "down", "stopped", "repair", "maintenance", "overheating", "noise", "vibration", "pressure", "temperature", "failure", "error"],
+        "critical_words": ["complete failure", "shutdown", "explosion", "major breakdown", "total loss"],
+        "high_words": ["broken", "malfunction", "down", "stopped", "overheating", "major", "urgent"],
+        "medium_words": ["repair", "maintenance", "noise", "vibration", "slow", "adjustment"],
+        "examples": ["Conveyor belt broken", "Motor overheating", "Equipment malfunction", "Machine down"]
     },
-    {
-        "category": "Process Improvement Idea",
-        "keywords": ["improve", "optimize", "efficiency", "productivity", "streamline", "automate", "reduce", "increase", "faster", "better", "easier", "suggestion", "idea", "recommend", "proposal", "enhancement", "upgrade", "workflow", "process", "lean", "5s", "kaizen", "training", "schedule", "organize", "standardize", "best practice", "innovation", "quality", "cost", "saving", "time", "method", "procedure", "system", "layout", "design", "ergonomic", "user friendly", "simplify", "consolidate", "eliminate", "waste", "bottleneck", "flow", "throughput", "cycle time", "setup", "changeover", "cross train", "multiskill", "flexibility", "capacity", "utilization"],
-        "examples": ["Could we automate this repetitive task", "Suggest implementing 5S system", "Optimize the loading dock schedule", "Cross-train operators for flexibility", "Streamline the packaging process", "What if we rearranged workspace layout", "Implement lean manufacturing principles", "Reduce setup time for efficiency"]
+    "Process Improvement Idea": {
+        "keywords": ["improve", "optimize", "efficiency", "productivity", "suggestion", "idea", "recommend", "better", "faster", "automate", "streamline", "reduce", "increase", "enhance", "upgrade"],
+        "critical_words": [],
+        "high_words": ["major improvement", "significant", "urgent change"],
+        "medium_words": ["improve", "optimize", "efficiency", "productivity", "enhance"],
+        "examples": ["Automate packaging", "Optimize workflow", "Improve efficiency", "Streamline process"]
     },
-    {
-        "category": "Other",
-        "keywords": ["supplies", "training", "lighting", "breakroom", "microwave", "parking", "cafeteria", "recognition", "materials", "facilities", "comfort", "ergonomic", "temperature", "air conditioning", "bathroom", "cleanliness", "coffee", "water", "snacks", "chair", "desk", "computer", "software", "phone", "communication", "meeting", "policy", "procedure", "documentation", "forms", "paperwork", "inventory", "storage", "organization", "housekeeping", "maintenance", "janitorial", "landscaping", "security", "access", "badge", "uniform", "locker", "shift", "overtime", "schedule", "break", "lunch", "benefits", "payroll", "hr", "human resources"],
-        "examples": ["Break room needs more supplies", "Parking lot has too many potholes", "Could we get better coffee", "Bathroom needs more frequent cleaning", "Temperature is too cold in office", "Need ergonomic assessment for workstation", "Request for additional training", "Improve communication between shifts"]
+    "Other": {
+        "keywords": ["supplies", "training", "lighting", "parking", "temperature", "break", "lunch", "bathroom", "coffee", "clean", "organize"],
+        "critical_words": [],
+        "high_words": ["urgent", "immediate"],
+        "medium_words": ["training", "supplies", "facilities"],
+        "examples": ["Need supplies", "Training request", "Parking issues", "Temperature control"]
     }
-]
-
-# Enhanced priority keywords with more specific safety and equipment terms
-PRIORITY_KEYWORDS = {
-    "critical": ["emergency", "fire", "explosion", "toxic", "gas leak", "electrical shock", "trapped", "unconscious", "severe injury", "ambulance", "evacuation", "hazmat", "complete failure", "plant shutdown", "production stopped", "major breakdown", "system failure", "immediate danger", "life threatening", "critical failure", "total loss", "complete stoppage"],
-    "high": ["danger", "hazard", "unsafe", "blocked exit", "exposed wire", "overheating", "smoking", "broken", "won't start", "major leak", "production stopped", "emergency stop", "high pressure", "high temperature", "significant risk", "equipment down", "major malfunction", "urgent repair", "safety risk", "injury risk", "broken guard", "missing safety", "sparks", "unusual noise", "vibration", "unstable"],
-    "medium": ["worn", "loose", "slow", "inconsistent", "needs repair", "minor leak", "calibration", "training needed", "efficiency", "productivity", "maintenance due", "adjustment needed", "replacement due", "intermittent", "degraded performance", "reduced capacity", "quality issue", "process variation", "minor problem", "scheduled maintenance"],
-    "low": ["suggestion", "idea", "recommend", "could we", "supplies", "comfort", "convenience", "nice to have", "future", "enhancement", "improvement", "optimize", "better way", "consider", "maybe", "perhaps", "eventually", "when possible", "minor issue", "cosmetic"]
 }
 
-# Lower similarity threshold for better detection
-SIMILARITY_THRESHOLD = 0.08
-MAX_TEXT_LENGTH = 5000
+# Priority determination keywords
+PRIORITY_INDICATORS = {
+    "critical": ["critical", "emergency", "immediate", "urgent", "asap", "now", "stop", "shutdown", "danger", "life", "severe", "major", "complete", "total"],
+    "high": ["high", "important", "soon", "broken", "down", "unsafe", "hazard", "significant"],
+    "medium": ["medium", "moderate", "repair", "maintenance", "improve", "fix"],
+    "low": ["low", "minor", "suggestion", "idea", "when possible", "future", "eventually"]
+}
 
-# ==============================================================================
-# CORE CLASSES  
-# ==============================================================================
+MAX_TEXT_LENGTH = 5000
 
 @dataclass
 class ClassificationResult:
@@ -70,339 +66,199 @@ class ClassificationResult:
     priority: str
     confidence: float
     priority_score: float
-    matched_example: Optional[str]
-    keyword_matches: List[str]
+    matched_keywords: List[str]
     priority_factors: List[str]
-    similarity_scores: Dict[str, float]
     error: Optional[str] = None
 
-class TextProcessor:
-    @staticmethod
-    def normalize_text(text: str) -> str:
-        if not text:
-            return ""
-        text = text.lower().strip()
-        text = re.sub(r'\s+', ' ', text)
-        text = re.sub(r'[^\w\s\-\']', ' ', text)
-        return text
-
-    @staticmethod
-    def extract_keywords(text: str) -> Set[str]:
-        words = TextProcessor.normalize_text(text).split()
-        stop_words = {'the', 'is', 'at', 'on', 'and', 'a', 'to', 'it', 'in', 'for', 'of', 'i', 'you', 'he', 'she', 'we', 'they', 'this', 'that', 'with', 'are', 'was', 'were', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must', 'can', 'an', 'as', 'be', 'by', 'from', 'up', 'out', 'so', 'if', 'no', 'not', 'only', 'own', 'same', 'such', 'than', 'too', 'very', 'just', 'now', 'also', 'its', 'our'}
-        return {word for word in words if len(word) > 2 and word not in stop_words}
-
-    @staticmethod
-    def calculate_similarity(text1: str, text2: str) -> float:
-        # Enhanced similarity calculation with fuzzy matching
-        seq_ratio = difflib.SequenceMatcher(None, text1.lower(), text2.lower()).ratio()
-        
-        words1 = set(TextProcessor.normalize_text(text1).split())
-        words2 = set(TextProcessor.normalize_text(text2).split())
-        if not words1 or not words2:
-            return seq_ratio
-        
-        # Jaccard similarity
-        jaccard = len(words1.intersection(words2)) / len(words1.union(words2))
-        
-        # Fuzzy word matching for partial matches
-        fuzzy_matches = 0
-        for word1 in words1:
-            for word2 in words2:
-                if len(word1) > 3 and len(word2) > 3:
-                    word_sim = difflib.SequenceMatcher(None, word1, word2).ratio()
-                    if word_sim > 0.8:
-                        fuzzy_matches += 1
-                        break
-        
-        fuzzy_score = fuzzy_matches / max(len(words1), len(words2)) if max(len(words1), len(words2)) > 0 else 0
-        
-        return (seq_ratio * 0.3) + (jaccard * 0.5) + (fuzzy_score * 0.2)
-
-class PriorityEngine:
-    def __init__(self):
-        self.priority_keywords = PRIORITY_KEYWORDS
-
-    def calculate_priority(self, text: str, category: str, text_keywords: Set[str]) -> Tuple[Priority, float, List[str]]:
-        normalized_text = text.lower()
-        base_score = 0.3  # Lower starting point
-        priority_factors = []
-        
-        # Enhanced keyword matching with partial matching
-        critical_matches = self._find_matches_enhanced(normalized_text, text_keywords, self.priority_keywords["critical"])
-        if critical_matches:
-            base_score += 5.0  # Strong boost for critical
-            priority_factors.extend([f"Critical: {match}" for match in critical_matches[:3]])
-        
-        high_matches = self._find_matches_enhanced(normalized_text, text_keywords, self.priority_keywords["high"])
-        if high_matches:
-            base_score += 3.0  # Good boost for high
-            priority_factors.extend([f"High: {match}" for match in high_matches[:3]])
-        
-        medium_matches = self._find_matches_enhanced(normalized_text, text_keywords, self.priority_keywords["medium"])
-        if medium_matches:
-            base_score += 1.8  # Moderate boost for medium
-            priority_factors.extend([f"Medium: {match}" for match in medium_matches[:2]])
-        
-        low_matches = self._find_matches_enhanced(normalized_text, text_keywords, self.priority_keywords["low"])
-        if low_matches:
-            base_score += 0.5  # Small boost for low
-            priority_factors.extend([f"Low: {match}" for match in low_matches[:2]])
-
-        # Enhanced category multipliers
-        category_multiplier = self._get_category_multiplier(category)
-        if category_multiplier != 1.0:
-            base_score *= category_multiplier
-            priority_factors.append(f"Category: {category} (×{category_multiplier})")
-
-        # Check urgency indicators
-        urgency_multiplier = self._check_urgency(normalized_text)
-        if urgency_multiplier != 1.0:
-            base_score *= urgency_multiplier
-            priority_factors.append(f"Urgency (×{urgency_multiplier})")
-
-        # Enhanced minimum scores for safety and equipment
-        if category == "Safety Concern" and base_score < 2.5:
-            base_score = 2.5
-            priority_factors.append("Minimum priority for safety concern")
-        elif category == "Machine/Equipment Issue" and base_score < 1.8:
-            base_score = 1.8
-            priority_factors.append("Minimum priority for equipment issue")
-
-        if not priority_factors:
-            priority_factors.append("Default priority assignment")
-
-        return self._score_to_priority(base_score), round(base_score, 2), priority_factors
-
-    def _find_matches_enhanced(self, text: str, text_keywords: Set[str], priority_keywords: List[str]) -> List[str]:
-        matches = []
-        for keyword in priority_keywords:
-            # Direct text match
-            if keyword in text:
-                matches.append(keyword)
-                continue
-            
-            # Keyword intersection
-            if any(word in text_keywords for word in keyword.split()):
-                matches.append(keyword)
-                continue
-            
-            # Fuzzy matching for important terms
-            for word in keyword.split():
-                if len(word) > 4:  # Only fuzzy match longer words
-                    for text_word in text_keywords:
-                        if len(text_word) > 4 and difflib.SequenceMatcher(None, word, text_word).ratio() > 0.85:
-                            matches.append(keyword)
-                            break
-        return matches
-
-    def _get_category_multiplier(self, category: str) -> float:
-        multipliers = {
-            "Safety Concern": 1.8,      # Higher for safety
-            "Machine/Equipment Issue": 1.4,  # Higher for equipment 
-            "Process Improvement Idea": 0.8,
-            "Other": 0.7
-        }
-        return multipliers.get(category, 1.0)
-
-    def _check_urgency(self, text: str) -> float:
-        immediate_indicators = ["now", "immediately", "asap", "urgent", "emergency", "right away", "critical", "stop", "shutdown"]
-        soon_indicators = ["soon", "quickly", "today", "this week", "priority", "important"]
-        
-        if any(indicator in text for indicator in immediate_indicators):
-            return 1.3
-        elif any(indicator in text for indicator in soon_indicators):
-            return 1.15
-        return 1.0
-
-    def _score_to_priority(self, score: float) -> Priority:
-        # Adjusted thresholds for better distribution
-        if score >= 5.0:
-            return Priority.CRITICAL
-        elif score >= 3.5:
-            return Priority.HIGH
-        elif score >= 2.0:
-            return Priority.MEDIUM
-        else:
-            return Priority.LOW
-
 class FeedbackClassifier:
-    def __init__(self, knowledge_base: List[Dict], similarity_threshold: float = SIMILARITY_THRESHOLD):
-        self.knowledge_base = knowledge_base
-        self.similarity_threshold = similarity_threshold
-        self.text_processor = TextProcessor()
-        self.priority_engine = PriorityEngine()
-
+    def __init__(self):
+        self.knowledge_base = KNOWLEDGE_BASE
+    
+    def normalize_text(self, text: str) -> str:
+        return re.sub(r'\s+', ' ', text.lower().strip())
+    
+    def extract_category_from_form(self, text: str) -> Optional[str]:
+        """Check if the form explicitly mentions a category"""
+        normalized = self.normalize_text(text)
+        
+        # Look for explicit category mentions in form submissions
+        if any(word in normalized for word in ["safety concern", "safety issue", "safety problem"]):
+            return "Safety Concern"
+        elif any(word in normalized for word in ["equipment issue", "machine problem", "equipment problem"]):
+            return "Machine/Equipment Issue"
+        elif any(word in normalized for word in ["improvement", "suggestion", "optimize", "idea"]):
+            return "Process Improvement Idea"
+        
+        return None
+    
+    def calculate_category_score(self, text: str, category: str) -> Tuple[float, List[str]]:
+        """Calculate how well text matches a category"""
+        normalized = self.normalize_text(text)
+        words = set(normalized.split())
+        
+        category_data = self.knowledge_base[category]
+        category_keywords = set(category_data["keywords"])
+        
+        # Find matching keywords
+        matches = words.intersection(category_keywords)
+        
+        # Add fuzzy matching for important terms
+        fuzzy_matches = []
+        for word in words:
+            if len(word) > 4:
+                for keyword in category_keywords:
+                    if len(keyword) > 4 and difflib.SequenceMatcher(None, word, keyword).ratio() > 0.85:
+                        fuzzy_matches.append(keyword)
+                        matches.add(keyword)
+        
+        # Calculate score based on keyword density
+        if len(category_keywords) == 0:
+            score = 0.0
+        else:
+            score = len(matches) / len(category_keywords)
+        
+        # Boost score for safety and equipment categories
+        if category in ["Safety Concern", "Machine/Equipment Issue"] and score > 0:
+            score *= 1.5
+        
+        return min(score, 1.0), list(matches)
+    
+    def determine_priority(self, text: str, category: str, matched_keywords: List[str]) -> Tuple[Priority, float, List[str]]:
+        """Determine priority based on text content and category"""
+        normalized = self.normalize_text(text)
+        factors = []
+        base_score = 1.0
+        
+        category_data = self.knowledge_base[category]
+        
+        # Check for priority-specific keywords in the category
+        critical_found = any(word in normalized for word in category_data["critical_words"])
+        high_found = any(word in normalized for word in category_data["high_words"])
+        medium_found = any(word in normalized for word in category_data["medium_words"])
+        
+        # Check general priority indicators
+        general_critical = any(word in normalized for word in PRIORITY_INDICATORS["critical"])
+        general_high = any(word in normalized for word in PRIORITY_INDICATORS["high"])
+        general_medium = any(word in normalized for word in PRIORITY_INDICATORS["medium"])
+        general_low = any(word in normalized for word in PRIORITY_INDICATORS["low"])
+        
+        # Determine priority based on findings
+        if critical_found or general_critical:
+            priority = Priority.CRITICAL
+            base_score = 5.0
+            factors.append("Critical keywords detected")
+        elif high_found or general_high:
+            priority = Priority.HIGH
+            base_score = 4.0
+            factors.append("High priority keywords detected")
+        elif medium_found or general_medium:
+            priority = Priority.MEDIUM
+            base_score = 2.5
+            factors.append("Medium priority keywords detected")
+        elif general_low:
+            priority = Priority.LOW
+            base_score = 1.0
+            factors.append("Low priority keywords detected")
+        else:
+            # Default based on category
+            if category == "Safety Concern":
+                priority = Priority.HIGH
+                base_score = 3.5
+                factors.append("Default high priority for safety concerns")
+            elif category == "Machine/Equipment Issue":
+                priority = Priority.MEDIUM
+                base_score = 2.0
+                factors.append("Default medium priority for equipment issues")
+            else:
+                priority = Priority.LOW
+                base_score = 1.0
+                factors.append("Default low priority")
+        
+        return priority, base_score, factors
+    
     def classify(self, text: str) -> ClassificationResult:
         if not text or not text.strip():
             return ClassificationResult(
                 category="Other", priority=Priority.LOW.value, confidence=0.0,
-                priority_score=0.0, matched_example=None, keyword_matches=[],
-                priority_factors=[], similarity_scores={}, error="Empty text provided"
+                priority_score=0.0, matched_keywords=[], priority_factors=[],
+                error="Empty text provided"
             )
-
+        
         try:
-            text_keywords = self.text_processor.extract_keywords(text)
-            scores = {}
-            best_examples = {}
-
-            # Enhanced scoring for each category
-            for item in self.knowledge_base:
-                category = item['category']
-                
-                # Enhanced keyword matching with partial matching
-                category_keywords = set(item.get('keywords', []))
-                keyword_matches = text_keywords.intersection(category_keywords)
-                
-                # Fuzzy keyword matching for better detection
-                fuzzy_keyword_matches = self._fuzzy_keyword_match(text_keywords, category_keywords)
-                all_matches = keyword_matches.union(fuzzy_keyword_matches)
-                
-                # Improved keyword scoring
-                keyword_score = len(all_matches) / max(len(category_keywords), 1) if category_keywords else 0.0
-                
-                # Boost keyword score for safety and equipment categories
-                if category in ["Safety Concern", "Machine/Equipment Issue"] and keyword_score > 0:
-                    keyword_score *= 1.3
-                
-                # Example similarity score
-                example_scores = [self.text_processor.calculate_similarity(text, example) 
-                                for example in item['examples']]
-                best_example_score = max(example_scores) if example_scores else 0.0
-                best_example = item['examples'][example_scores.index(best_example_score)] if example_scores else None
-                
-                # Enhanced combined score calculation
-                if keyword_score > 0 and best_example_score > 0:
-                    # Both keyword and example matches - strong indicator
-                    combined_score = (keyword_score * 0.6) + (best_example_score * 0.4)
-                    combined_score *= 1.4  # Boost for having both types of matches
-                elif keyword_score > 0:
-                    # Keyword matches only
-                    combined_score = keyword_score * 0.8
-                elif best_example_score > 0:
-                    # Example matches only
-                    combined_score = best_example_score * 0.7
-                else:
-                    combined_score = 0.0
-                
-                scores[category] = combined_score
-                best_examples[category] = best_example
-
-            # Find best category with improved logic
-            best_category = max(scores.keys(), key=lambda k: scores[k])
-            confidence = scores[best_category]
-
-            # Enhanced confidence and category assignment
-            if confidence < self.similarity_threshold:
-                # Check if it's a safety or equipment issue that got missed
-                safety_indicators = ["safety", "danger", "hazard", "unsafe", "emergency", "injury", "accident", "risk"]
-                equipment_indicators = ["machine", "equipment", "broken", "malfunction", "down", "stopped", "repair", "maintenance"]
-                
-                text_lower = text.lower()
-                if any(indicator in text_lower for indicator in safety_indicators):
-                    category_name = "Safety Concern"
-                    confidence = 0.6  # Assign reasonable confidence for safety
-                elif any(indicator in text_lower for indicator in equipment_indicators):
-                    category_name = "Machine/Equipment Issue"
-                    confidence = 0.6  # Assign reasonable confidence for equipment
-                else:
-                    category_name = "Other"
-                    confidence = min(0.5, confidence + 0.2)
-                
-                matched_example = None
-                keyword_matches = []
+            # First, check if category is explicitly mentioned in form
+            explicit_category = self.extract_category_from_form(text)
+            
+            if explicit_category:
+                category = explicit_category
+                _, matched_keywords = self.calculate_category_score(text, category)
+                confidence = 0.9  # High confidence for explicit mentions
             else:
-                category_name = best_category
-                matched_example = best_examples[best_category]
-                item = next(i for i in self.knowledge_base if i['category'] == category_name)
+                # Calculate scores for all categories
+                scores = {}
+                all_matches = {}
                 
-                # Get both exact and fuzzy keyword matches
-                exact_matches = text_keywords.intersection(set(item.get('keywords', [])))
-                fuzzy_matches = self._fuzzy_keyword_match(text_keywords, set(item.get('keywords', [])))
-                keyword_matches = list(exact_matches.union(fuzzy_matches))
+                for cat in self.knowledge_base.keys():
+                    score, matches = self.calculate_category_score(text, cat)
+                    scores[cat] = score
+                    all_matches[cat] = matches
                 
-                # Enhanced confidence boost
-                if confidence > 0.2:
-                    confidence = min(1.0, confidence * 1.5)
-
-            # Calculate priority
-            priority, priority_score, priority_factors = self.priority_engine.calculate_priority(
-                text, category_name, text_keywords
-            )
-
+                # Find best category
+                category = max(scores.keys(), key=lambda k: scores[k])
+                confidence = scores[category]
+                matched_keywords = all_matches[category]
+                
+                # If no good match found, default intelligently
+                if confidence < 0.1:
+                    normalized = self.normalize_text(text)
+                    if any(word in normalized for word in ["safe", "danger", "hazard", "injury"]):
+                        category = "Safety Concern"
+                        confidence = 0.6
+                    elif any(word in normalized for word in ["machine", "equipment", "broken", "repair"]):
+                        category = "Machine/Equipment Issue"
+                        confidence = 0.6
+                    else:
+                        category = "Other"
+                        confidence = 0.5
+            
+            # Determine priority
+            priority, priority_score, priority_factors = self.determine_priority(text, category, matched_keywords)
+            
             return ClassificationResult(
-                category=category_name,
+                category=category,
                 priority=priority.value,
                 confidence=round(confidence, 3),
                 priority_score=priority_score,
-                matched_example=matched_example,
-                keyword_matches=keyword_matches[:5],  # Limit to top 5 matches
-                priority_factors=priority_factors,
-                similarity_scores={k: round(v, 3) for k, v in scores.items()}
+                matched_keywords=matched_keywords[:5],
+                priority_factors=priority_factors
             )
-
+            
         except Exception as e:
-            logger.error(f"Classification error: {e}", exc_info=True)
+            logger.error(f"Classification error: {e}")
             return ClassificationResult(
                 category="Other", priority=Priority.LOW.value, confidence=0.0,
-                priority_score=0.0, matched_example=None, keyword_matches=[],
-                priority_factors=[], similarity_scores={}, 
+                priority_score=0.0, matched_keywords=[], priority_factors=[],
                 error="Classification error occurred"
             )
 
-    def _fuzzy_keyword_match(self, text_keywords: Set[str], category_keywords: Set[str]) -> Set[str]:
-        """Find fuzzy matches between text keywords and category keywords"""
-        fuzzy_matches = set()
-        for text_word in text_keywords:
-            for cat_word in category_keywords:
-                if len(text_word) > 3 and len(cat_word) > 3:
-                    similarity = difflib.SequenceMatcher(None, text_word, cat_word).ratio()
-                    if similarity > 0.8:
-                        fuzzy_matches.add(cat_word)
-        return fuzzy_matches
-
-# ==============================================================================
-# FLASK ROUTES
-# ==============================================================================
-
-classifier = FeedbackClassifier(KNOWLEDGE_BASE)
-
-def validate_request_data(data: Optional[Dict]) -> Tuple[bool, str]:
-    if not data:
-        return False, "No JSON data provided"
-    if 'text' not in data:
-        return False, "Missing 'text' field"
-    text = data.get('text', '')
-    if not isinstance(text, str):
-        return False, "'text' must be a string"
-    if len(text) > MAX_TEXT_LENGTH:
-        return False, f"Text exceeds {MAX_TEXT_LENGTH} characters"
-    return True, ""
+classifier = FeedbackClassifier()
 
 @app.route("/classify", methods=['POST'])
 def handle_classify():
     data = request.get_json()
-    is_valid, error_message = validate_request_data(data)
-    if not is_valid:
-        return jsonify({"error": error_message}), 400
-
-    result = classifier.classify(data.get("text", ""))
+    if not data or 'text' not in data:
+        return jsonify({"error": "Missing 'text' field"}), 400
+    
+    text = data.get('text', '')
+    if len(text) > MAX_TEXT_LENGTH:
+        return jsonify({"error": f"Text exceeds {MAX_TEXT_LENGTH} characters"}), 400
+    
+    result = classifier.classify(text)
     if result.error:
         return jsonify({"error": result.error}), 500
-
-    # Enhanced confidence to 0-10 scale with better distribution
-    confidence_raw = result.confidence
-    if confidence_raw >= 0.8:
-        confidence_int = 10
-    elif confidence_raw >= 0.6:
-        confidence_int = 8 + int((confidence_raw - 0.6) * 10)
-    elif confidence_raw >= 0.4:
-        confidence_int = 6 + int((confidence_raw - 0.4) * 10)
-    elif confidence_raw >= 0.2:
-        confidence_int = 4 + int((confidence_raw - 0.2) * 10)
-    else:
-        confidence_int = max(1, int(confidence_raw * 20))
-
+    
+    # Convert confidence to 1-10 scale
+    confidence_int = max(1, min(10, int(result.confidence * 10) + 1))
+    
     return jsonify({
         "category": result.category,
         "autocategory": result.category,
@@ -411,11 +267,8 @@ def handle_classify():
         "confidence": confidence_int,
         "confidence_score": confidence_int,
         "priority_score": result.priority_score,
-        "matched_example": result.matched_example,
-        "keyword_matches": result.keyword_matches,
-        "priority_factors": result.priority_factors,
-        "similarity_scores": result.similarity_scores,
-        "error": result.error,
+        "matched_keywords": result.matched_keywords,
+        "priority_factors": result.priority_factors
     })
 
 @app.route("/")
@@ -432,11 +285,12 @@ def home():
             * { margin: 0; padding: 0; box-sizing: border-box; }
             
             body {
-                font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+                font-family: 'Inter', sans-serif;
                 line-height: 1.6;
                 color: #1f2937;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 min-height: 100vh;
+                position: relative;
             }
             
             .container {
@@ -483,12 +337,11 @@ def home():
                 margin-bottom: 2rem;
                 box-shadow: 0 20px 40px rgba(0,0,0,0.1);
                 border: 1px solid rgba(255,255,255,0.2);
-                transition: transform 0.3s ease, box-shadow 0.3s ease;
+                transition: transform 0.3s ease;
             }
             
             .card:hover {
                 transform: translateY(-5px);
-                box-shadow: 0 30px 60px rgba(0,0,0,0.15);
             }
             
             .card h2 {
@@ -501,23 +354,15 @@ def home():
                 gap: 0.75rem;
             }
             
-            .card h3 {
-                color: #374151;
-                font-size: 1.25rem;
-                font-weight: 600;
-                margin: 1.5rem 0 1rem 0;
-            }
-            
             .endpoint {
                 background: linear-gradient(135deg, #1f2937 0%, #374151 100%);
                 color: white;
                 padding: 1rem 1.5rem;
                 border-radius: 12px;
-                font-family: 'Monaco', 'Menlo', monospace;
+                font-family: 'Monaco', monospace;
                 font-size: 1.1rem;
                 margin: 1rem 0;
                 display: inline-block;
-                font-weight: 500;
             }
             
             .code-block {
@@ -526,10 +371,9 @@ def home():
                 border-radius: 12px;
                 padding: 1.5rem;
                 margin: 1rem 0;
-                font-family: 'Monaco', 'Menlo', monospace;
+                font-family: 'Monaco', monospace;
                 font-size: 0.9rem;
                 overflow-x: auto;
-                line-height: 1.6;
             }
             
             .grid {
@@ -556,10 +400,6 @@ def home():
                 right: 0;
                 height: 4px;
                 background: var(--accent-color);
-            }
-            
-            .priority-card:hover {
-                transform: translateY(-3px);
             }
             
             .critical {
@@ -598,12 +438,22 @@ def home():
             .category-card:hover {
                 border-color: #4f46e5;
                 transform: translateY(-3px);
-                box-shadow: 0 10px 25px rgba(79, 70, 229, 0.1);
             }
             
-            .icon {
-                font-size: 1.5rem;
-                margin-right: 0.5rem;
+            .watermark {
+                position: fixed;
+                bottom: 10px;
+                right: 15px;
+                font-size: 10px;
+                color: rgba(255,255,255,0.4);
+                font-family: monospace;
+                z-index: 1000;
+                pointer-events: none;
+                user-select: none;
+                background: rgba(0,0,0,0.1);
+                padding: 2px 6px;
+                border-radius: 3px;
+                backdrop-filter: blur(5px);
             }
             
             footer {
@@ -614,26 +464,10 @@ def home():
                 margin-top: 3rem;
             }
             
-            /* Hidden watermark */
-            .watermark {
-                position: fixed;
-                bottom: 5px;
-                right: 10px;
-                font-size: 8px;
-                color: rgba(255,255,255,0.1);
-                font-family: monospace;
-                z-index: 1000;
-                pointer-events: none;
-                user-select: none;
-                transform: rotate(-90deg);
-                transform-origin: bottom right;
-            }
-            
             @media (max-width: 768px) {
                 .header h1 { font-size: 2rem; }
                 .card { padding: 1.5rem; }
                 .container { padding: 1rem; }
-                .watermark { display: none; }
             }
         </style>
     </head>
@@ -642,105 +476,77 @@ def home():
         <div class="container">
             <header class="header">
                 <h1>🔍 Feedback Classification API</h1>
-                <p>Enhanced intelligent categorization and priority assessment for manufacturing feedback</p>
+                <p>Smart categorization and priority assessment for manufacturing feedback</p>
                 <div class="status-badge">✅ API Status: Online & Ready</div>
             </header>
 
             <div class="card">
-                <h2><span class="icon">🚀</span>API Endpoint</h2>
+                <h2><span>🚀</span>API Endpoint</h2>
                 <div class="endpoint">POST /classify</div>
-                <p>Submit feedback text for enhanced intelligent classification and priority assessment with improved accuracy.</p>
+                <p>Submit feedback text for intelligent classification and priority assessment.</p>
                 
                 <h3>📝 Request Format</h3>
                 <div class="code-block">{
-    "text": "Emergency exit is blocked by equipment and workers can't get out"
+    "text": "Safety concern: Emergency exit is blocked by equipment"
 }</div>
                 
                 <h3>📊 Response Format</h3>
                 <div class="code-block">{
     "category": "Safety Concern",
-    "autocategory": "Safety Concern", 
     "priority": "Critical",
-    "autopriority": "Critical",
     "confidence": 9,
-    "confidence_score": 9,
-    "priority_score": 6.8,
-    "matched_example": "Emergency exit is blocked",
-    "keyword_matches": ["emergency", "exit", "blocked", "safety"],
-    "priority_factors": ["Critical: emergency", "Critical: blocked exit", "Category: Safety Concern (×1.8)"]
+    "priority_score": 5.0,
+    "matched_keywords": ["safety", "emergency", "exit", "blocked"],
+    "priority_factors": ["Critical keywords detected"]
 }</div>
             </div>
 
             <div class="card">
-                <h2><span class="icon">📂</span>Enhanced Categories</h2>
-                <p>Improved classification with expanded keyword detection and fuzzy matching for better accuracy.</p>
+                <h2><span>📂</span>Categories</h2>
                 <div class="grid">
                     <div class="category-card">
                         <h4>🛡️ Safety Concern</h4>
-                        <p>Safety hazards, emergencies, and risks with enhanced detection</p>
+                        <p>Safety hazards, emergencies, and workplace risks</p>
                     </div>
                     <div class="category-card">
                         <h4>⚙️ Machine/Equipment Issue</h4>
-                        <p>Equipment problems, malfunctions, and maintenance needs</p>
+                        <p>Equipment problems and maintenance needs</p>
                     </div>
                     <div class="category-card">
                         <h4>💡 Process Improvement Idea</h4>
-                        <p>Optimization suggestions and efficiency improvements</p>
+                        <p>Suggestions and efficiency improvements</p>
                     </div>
                     <div class="category-card">
                         <h4>📋 Other</h4>
-                        <p>General feedback, facilities, and workplace requests</p>
+                        <p>General feedback and facility requests</p>
                     </div>
                 </div>
             </div>
 
             <div class="card">
-                <h2><span class="icon">⚡</span>Enhanced Priority Levels</h2>
-                <p>Improved priority scoring with balanced thresholds and category-specific adjustments.</p>
+                <h2><span>⚡</span>Priority Levels</h2>
                 <div class="grid">
                     <div class="priority-card critical">
                         <h4>🚨 Critical</h4>
-                        <p>Immediate safety threats, emergencies, or complete production stoppage</p>
+                        <p>Immediate threats requiring urgent action</p>
                     </div>
                     <div class="priority-card high">
                         <h4>🔥 High</h4>
-                        <p>Urgent safety risks, major equipment failures requiring prompt attention</p>
+                        <p>Important issues needing prompt attention</p>
                     </div>
                     <div class="priority-card medium">
                         <h4>⚠️ Medium</h4>
-                        <p>Important issues, maintenance needs, and process problems to address</p>
+                        <p>Issues to address in reasonable timeframe</p>
                     </div>
                     <div class="priority-card low">
                         <h4>📝 Low</h4>
-                        <p>Suggestions, minor issues, and non-urgent improvement ideas</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2><span class="icon">🎯</span>Key Improvements</h2>
-                <div class="grid">
-                    <div class="category-card">
-                        <h4>🔍 Enhanced Detection</h4>
-                        <p>Lower similarity threshold and fuzzy matching for better category detection</p>
-                    </div>
-                    <div class="category-card">
-                        <h4>🛡️ Safety Priority</h4>
-                        <p>Automatic safety concern detection with minimum priority levels</p>
-                    </div>
-                    <div class="category-card">
-                        <h4>📊 Improved Confidence</h4>
-                        <p>Better confidence scoring with enhanced distribution (1-10 scale)</p>
-                    </div>
-                    <div class="category-card">
-                        <h4>⚙️ Equipment Focus</h4>
-                        <p>Enhanced equipment issue detection with expanded keyword matching</p>
+                        <p>Suggestions and non-urgent improvements</p>
                     </div>
                 </div>
             </div>
 
             <footer>
-                <p>Enhanced Feedback Classification API • Optimized for manufacturing environments with improved accuracy and reliability</p>
+                <p>Enhanced Feedback Classification API • Streamlined for manufacturing environments</p>
             </footer>
         </div>
     </body>
@@ -755,10 +561,6 @@ def not_found(error):
 def internal_error(error):
     logger.error(f"Internal error: {error}")
     return jsonify({"error": "Internal server error"}), 500
-
-# ==============================================================================
-# MAIN
-# ==============================================================================
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
