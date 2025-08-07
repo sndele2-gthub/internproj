@@ -663,7 +663,7 @@ def home():
         </style>
     </head>
     <body>
-        <div class="watermark">Enhanced by Claude - Made by Sean N</div>
+        <div class="watermark">Made by Sean N</div>
         <div class="container">
             <header class="header">
                 <h1>🧠 Enhanced Feedback Classification API</h1>
