@@ -1,3 +1,177 @@
+import os
+import re
+import difflib
+import logging
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple, Set
+from dataclasses import dataclass, field
+from enum import Enum
+from flask import Flask, request, jsonify, render_template_string
+from datetime import datetime, timedelta
+import hashlib
+
+# --- Configuration ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+app = Flask(__name__)
+
+# --- Enums and Data Structures ---
+class Priority(Enum):
+    LOW = "Low"
+    MEDIUM = "Medium"
+    HIGH = "High"
+    CRITICAL = "Critical"
+
+@dataclass
+class SubmissionRecord:
+    text: str
+    category: str
+    priority: str
+    timestamp: datetime
+    submission_hash: str
+    is_escalated: bool = False
+
+@dataclass
+class ClassificationResult:
+    category: str
+    priority: str
+    confidence: float
+    matched_keywords: Dict[str, List[str]] = field(default_factory=dict)
+    priority_factors: List[str] = field(default_factory=list)
+    is_duplicate: bool = False
+    escalation_applied: bool = False
+
+# --- Knowledge Base and Constants ---
+IMPACT_LEVELS = {"Minimal": Priority.LOW, "Moderate": Priority.MEDIUM, "Significant": Priority.HIGH, "Critical": Priority.CRITICAL}
+MAX_TEXT_LENGTH = 5000
+
+KNOWLEDGE_BASE = {
+    "Safety Concern": {
+        "critical": {"emergency", "fire", "explosion", "fatal"},
+        "high": {"danger", "hazard", "unsafe", "injury", "accident"},
+        "medium": {"safety", "risk", "warning", "slippery"},
+        "negation": {"not", "no", "without", "lacking"},
+    },
+    "Machine/Equipment Issue": {
+        "critical": {"complete failure", "shutdown", "catastrophic", "unusable"},
+        "high": {"broken", "malfunction", "down", "stopped", "leaking"},
+        "medium": {"noise", "vibration", "loose", "maintenance"},
+        "negation": {"not", "no", "without"},
+    },
+    "Process Improvement Idea": {
+        "high": {"automate", "streamline", "optimize"},
+        "medium": {"improve", "efficiency", "better", "process"},
+        "negation": [],
+    },
+    "Other": {
+        "medium": {"supplies", "lighting", "parking", "temperature"},
+        "negation": [],
+    }
+}
+
+# --- Core Logic Functions ---
+class ClassifierLogic:
+    def __init__(self):
+        self.submissions = []
+        self.retention_hours = 168
+        self.similarity_threshold = 0.6
+        self.escalation_threshold = 2
+
+    def _normalize_text(self, text: str) -> List[str]:
+        return re.findall(r'\b\w+\b', text.lower())
+
+    def _calculate_scores(self, tokens: List[str]) -> Tuple[Dict, Dict]:
+        category_scores, matched_keywords = defaultdict(float), defaultdict(lambda: defaultdict(list))
+        for cat, data in KNOWLEDGE_BASE.items():
+            for i, token in enumerate(tokens):
+                score = 0
+                level = None
+                if token in data["critical"]: score, level = 3.0, "critical"
+                elif token in data["high"]: score, level = 2.0, "high"
+                elif token in data["medium"]: score, level = 1.0, "medium"
+
+                if score > 0:
+                    is_negated = any(t in data["negation"] for t in tokens[max(0, i-3):i+4])
+                    if not is_negated:
+                        category_scores[cat] += score
+                        matched_keywords[cat][level].append(token)
+        return dict(category_scores), dict(matched_keywords)
+
+    def _determine_priority(self, scores: Dict, text: str) -> Tuple[Priority, List[str]]:
+        factors = []
+        text_lower = text.lower()
+        
+        explicit_level = None
+        match = re.search(r"impact level: (\w+)", text_lower)
+        if match and match.group(1).capitalize() in IMPACT_LEVELS:
+            explicit_level = match.group(1).capitalize()
+            factors.append(f"Explicit Impact Level: {explicit_level}")
+
+        critical_score = scores.get("Safety Concern", 0) + scores.get("Machine/Equipment Issue", 0)
+        
+        if explicit_level == "Critical" or critical_score >= 3.0:
+            if critical_score >= 3.0: factors.append("Direct Critical indicators detected.")
+            return Priority.CRITICAL, factors
+        elif explicit_level == "Significant" or critical_score >= 2.0:
+            if critical_score >= 2.0: factors.append("High severity indicators.")
+            return Priority.HIGH, factors
+        elif explicit_level == "Moderate" or any(s > 0 for cat, s in scores.items() if cat != "Other"):
+            if explicit_level == "Moderate": factors.append("Explicit Impact Level: Moderate")
+            return Priority.MEDIUM, factors
+        else:
+            factors.append("Low severity or general suggestion.")
+            return Priority.LOW, factors
+
+    def _analyze_duplicates(self, text: str, category: str, priority: str) -> Tuple[bool, bool, int, str]:
+        self.submissions = [s for s in self.submissions if s.timestamp > datetime.now() - timedelta(hours=self.retention_hours)]
+        
+        new_hash = hashlib.md5(text.lower().encode()).hexdigest()
+        similar_count = 0
+        
+        for s in self.submissions:
+            is_match = (s.submission_hash == new_hash) or \
+                       (difflib.SequenceMatcher(None, text.lower(), s.text.lower()).ratio() > self.similarity_threshold)
+            if is_match and s.category == category:
+                similar_count += 1
+
+        is_duplicate = similar_count > 0
+        escalation = False
+        final_priority = priority
+        
+        if priority in (Priority.LOW.value, Priority.MEDIUM.value) and similar_count >= self.escalation_threshold:
+            escalation = True
+            final_priority = Priority.CRITICAL.value
+            
+        self.submissions.append(SubmissionRecord(text=text, category=category, priority=final_priority, timestamp=datetime.now(), submission_hash=new_hash, is_escalated=escalation))
+        return is_duplicate, escalation, similar_count, final_priority
+
+    def classify_and_process(self, text: str) -> ClassificationResult:
+        if not text or len(text) > MAX_TEXT_LENGTH:
+            return ClassificationResult("Other", Priority.LOW.value, 0.1, {}, ["Invalid input"])
+        
+        tokens = self._normalize_text(text)
+        scores, keywords = self._calculate_scores(tokens)
+        
+        best_category = max(scores, key=scores.get, default="Other")
+        if scores.get(best_category, 0) == 0:
+            best_category = "Other"
+            
+        initial_priority, factors = self._determine_priority(scores, text)
+        is_duplicate, escalation, similar_count, final_priority = self._analyze_duplicates(text, best_category, initial_priority.value)
+        
+        if escalation:
+            factors.append(f"ESCALATED TO CRITICAL: {similar_count} similar reports found.")
+        
+        confidence = 0.5 + (scores.get(best_category, 0) / (sum(scores.values()) + 1) * 0.5)
+        
+        return ClassificationResult(best_category, final_priority, round(confidence, 3), keywords.get(best_category, {}), factors, is_duplicate, escalation)
+
+classifier_logic = ClassifierLogic()
+
+# --- Flask Routes and UI ---
+@app.route("/", methods=["GET"])
+def home():
+    html_content = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -455,7 +629,7 @@
         </header>
 
         <div class="main-card">
-            <form id="classificationForm">
+            <form id="classificationForm" onsubmit="return false;">
                 <div class="form-group">
                     <label for="feedbackText">
                         <i class="fas fa-comment-alt"></i> Enter your feedback or concern
@@ -567,13 +741,12 @@
         <div id="statsContainer" class="stats-card" style="display: none;">
             <h3><i class="fas fa-chart-line"></i> System Statistics</h3>
             <div class="stats-grid" id="statsGrid">
-                <!-- Stats will be populated here -->
-            </div>
+                </div>
         </div>
     </div>
 
     <script>
-        const API_BASE_URL = 'http://localhost:5000'; // Update this to match your Flask server
+        const API_BASE_URL = ''; // Now relative to the server
         
         // DOM elements
         const form = document.getElementById('classificationForm');
@@ -647,7 +820,7 @@
                 displayResults(result);
                 
             } catch (error) {
-                showError(`Failed to classify feedback: ${error.message}. Make sure the Flask server is running on ${API_BASE_URL}`);
+                showError(`Failed to classify feedback: ${error.message}. Make sure the Flask server is running on the correct port.`);
             } finally {
                 classifyBtn.innerHTML = originalContent;
                 classifyBtn.disabled = false;
@@ -679,12 +852,11 @@
             const escalationAlert = document.getElementById('escalationAlert');
             const escalationMessage = document.getElementById('escalationMessage');
             
-            if (result.duplicate_analysis && result.duplicate_analysis.escalation_applied) {
+            if (result.escalation_applied) {
                 escalationAlert.style.display = 'flex';
                 escalationMessage.innerHTML = `
                     This issue has been escalated to <strong>CRITICAL</strong> priority due to 
-                    ${result.duplicate_analysis.similar_count} similar submissions detected.
-                    <br><small>Original priority: ${result.duplicate_analysis.original_priority}</small>
+                    a duplicate submission.
                 `;
             } else {
                 escalationAlert.style.display = 'none';
@@ -784,3 +956,53 @@
     </script>
 </body>
 </html>
+"""
+    return render_template_string(html_content)
+
+@app.route("/classify", methods=["POST"])
+def classify_route():
+    try:
+        data = request.get_json()
+        text = data.get("text", "")
+        if not text:
+            return jsonify({"error": "Missing 'text' in request body"}), 400
+        
+        result = classifier_logic.classify_and_process(text)
+        
+        # Prepare the response with data the front end expects
+        response_data = {
+            "category": result.category,
+            "priority": result.priority,
+            "confidence": result.confidence,
+            "matched_keywords": result.matched_keywords,
+            "priority_factors": result.priority_factors,
+            "is_duplicate": result.is_duplicate,
+            "escalation_applied": result.escalation_applied,
+        }
+        
+        return jsonify(response_data)
+    except Exception as e:
+        logger.error(f"Error during classification: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/duplicate_stats", methods=["GET"])
+def stats_route():
+    try:
+        # Calculate stats from the in-memory list
+        total_submissions = len(classifier_logic.submissions)
+        escalated_count = sum(1 for s in classifier_logic.submissions if s.is_escalated)
+        
+        stats = {
+            "total_submissions_retained": total_submissions,
+            "escalated_critical_in_memory": escalated_count,
+            "retention_hours": classifier_logic.retention_hours,
+            "similarity_threshold": classifier_logic.similarity_threshold,
+            "escalation_threshold": classifier_logic.escalation_threshold
+        }
+        return jsonify(stats)
+    except Exception as e:
+        logger.error(f"Error generating stats: {e}")
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=5000)
