@@ -184,96 +184,22 @@ def home():
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>AI Feedback Classifier</title>
         <style>
-            body {
-                font-family: 'Segoe UI', Arial, sans-serif;
-                background-color: #f4f7f6;
-                color: #333;
-                margin: 0;
-                padding: 40px;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                min-height: 100vh;
-            }
-            .container {
-                background: #ffffff;
-                padding: 30px;
-                border-radius: 12px;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-                width: 100%;
-                max-width: 650px;
-                margin-top: 20px;
-            }
-            h1 {
-                color: #2c3e50;
-                text-align: center;
-                margin-bottom: 25px;
-                font-weight: 600;
-            }
-            form {
-                display: flex;
-                flex-direction: column;
-            }
-            textarea {
-                width: 100%;
-                height: 150px;
-                padding: 15px;
-                border: 1px solid #e0e0e0;
-                border-radius: 8px;
-                font-size: 16px;
-                margin-bottom: 20px;
-                resize: vertical;
-                box-sizing: border-box;
-            }
-            button {
-                padding: 12px 20px;
-                background-color: #3498db;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                font-size: 18px;
-                cursor: pointer;
-                transition: background-color 0.3s, transform 0.2s;
-                font-weight: 600;
-            }
-            button:hover {
-                background-color: #2980b9;
-                transform: translateY(-2px);
-            }
-            .results {
-                margin-top: 30px;
-                border-top: 1px solid #e0e0e0;
-                padding-top: 25px;
-            }
-            .results h2 {
-                color: #2c3e50;
-                margin-bottom: 20px;
-                font-weight: 600;
-            }
-            .result-item {
-                margin-bottom: 15px;
-                display: flex;
-                flex-direction: column;
-            }
-            .result-item strong {
-                font-size: 1.1em;
-                color: #555;
-                margin-bottom: 5px;
-            }
-            .result-item span, .result-item ul {
-                font-size: 1em;
-                color: #333;
-                margin: 0;
-            }
-            .result-item ul {
-                list-style-type: disc;
-                padding-left: 25px;
-                margin-top: 5px;
-            }
-            .priority-critical { color: #e74c3c; font-weight: bold; }
-            .priority-high { color: #f39c12; font-weight: bold; }
-            .priority-medium { color: #3498db; font-weight: bold; }
-            .priority-low { color: #2ecc71; font-weight: bold; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+            .container { background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); width: 100%; max-width: 600px; margin-top: 20px; }
+            h1 { color: #1a1a1a; text-align: center; margin-bottom: 20px; }
+            form { display: flex; flex-direction: column; }
+            textarea { width: 100%; height: 150px; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; margin-bottom: 20px; resize: vertical; }
+            button { padding: 12px 20px; background-color: #007bff; color: white; border: none; border-radius: 8px; font-size: 18px; cursor: pointer; transition: background-color 0.3s; }
+            button:hover { background-color: #0056b3; }
+            .results { margin-top: 30px; border-top: 2px solid #e0e0e0; padding-top: 20px; }
+            .results h2 { color: #007bff; }
+            .result-item { margin-bottom: 15px; }
+            .result-item strong { display: block; font-size: 1.1em; color: #555; }
+            .result-item span, .result-item ul { font-size: 1em; color: #333; margin-top: 5px; margin-left: 10px; }
+            .priority-critical { color: #d9534f; font-weight: bold; }
+            .priority-high { color: #f0ad4e; font-weight: bold; }
+            .priority-medium { color: #5bc0de; font-weight: bold; }
+            .priority-low { color: #5cb85c; }
         </style>
     </head>
     <body>
@@ -296,11 +222,11 @@ def home():
                 </div>
                 <div class="result-item">
                     <strong>Confidence:</strong>
-                    <span>{{ results.confidence }}</span>
+                    <span>{{ results.confidence }} (0.0-1.0)</span>
                 </div>
                 {% if results.priority_factors %}
                 <div class="result-item">
-                    <strong>Factors:</strong>
+                    <strong>Priority Factors:</strong>
                     <ul>
                         {% for factor in results.priority_factors %}
                         <li>{{ factor }}</li>
@@ -308,10 +234,12 @@ def home():
                     </ul>
                 </div>
                 {% endif %}
+                {% if results.is_duplicate %}
                 <div class="result-item">
                     <strong>Duplicate Status:</strong>
                     <span>{{ "Duplicate" if results.is_duplicate else "Not a Duplicate" }} (Escalation Applied: {{ "Yes" if results.escalation_applied else "No" }})</span>
                 </div>
+                {% endif %}
             </div>
             {% endif %}
         </div>
