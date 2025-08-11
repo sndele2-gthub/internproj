@@ -1,436 +1,786 @@
-import os
-import re
-import difflib
-import logging
-from collections import Counter, defaultdict
-from typing import Dict, List, Optional, Tuple, Set
-from dataclasses import dataclass, field
-from enum import Enum
-from flask import Flask, request, jsonify
-from datetime import datetime, timedelta
-import math
-import hashlib
-
-# Configure logging to display INFO messages and above
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-app = Flask(__name__)
-
-# --- ENHANCED CONSTANTS AND KNOWLEDGE BASE ---
-
-class Priority(Enum):
-    LOW = "Low"
-    MEDIUM = "Medium"
-    HIGH = "High"
-    CRITICAL = "Critical"
-
-# Impact levels from the user form
-IMPACT_LEVELS = {
-    "Minimal": Priority.LOW,
-    "Moderate": Priority.MEDIUM,
-    "Significant": Priority.HIGH,
-    "Critical": Priority.CRITICAL,
-}
-
-# Adjusted knowledge base for better separation of concerns and more granular scoring
-# Using a flat structure for keywords for easier lookup
-KNOWLEDGE_BASE = {
-    "Safety Concern": {
-        "critical_keywords": {"emergency", "fire", "explosion", "toxic", "unconscious", "trapped", "evacuation", "fatal", "imminent danger", "life threatening"},
-        "high_keywords": {"danger", "hazard", "unsafe", "injury", "accident", "hurt", "injured", "fall", "cut", "burn", "electrical", "shock", "blocked", "spill", "leak"},
-        "medium_keywords": {"safety", "risk", "ppe", "protective", "guard", "warning", "caution", "helmet", "gloves", "training"},
-        "negation_words": {"not", "no", "without", "lacking", "need", "should", "could", "want", "wish", "suggest", "could be", "might be", "if"},
-    },
-    "Machine/Equipment Issue": {
-        "critical_keywords": {"explosion", "fire", "complete failure", "shutdown", "total loss", "major breakdown", "catastrophic", "halted", "broken down", "unusable", "seized", "burnt out"},
-        "high_keywords": {"broken", "malfunction", "down", "stopped", "jam", "stuck", "overheating", "failure", "error", "crash", "damaged", "faulty", "leaking"},
-        "medium_keywords": {"machine", "equipment", "conveyor", "motor", "pump", "repair", "maintenance", "noise", "vibration", "rattling", "squeaking", "loose", "worn", "calibration", "slow", "hesitates", "clicking"},
-        "negation_words": {"not", "no", "without", "need", "should", "could", "want", "suggest"},
-    },
-    "Process Improvement Idea": {
-        "high_keywords": {"automate", "streamline", "optimize", "revolutionize"},
-        "medium_keywords": {"improve", "efficiency", "productivity", "enhance", "better", "workflow", "process", "reduce waste", "faster"},
-        "negation_words": [],
-    },
-    "Other": {
-        "medium_keywords": {"supplies", "training", "lighting", "parking", "temperature", "breakroom", "facilities", "heating", "cooling", "air conditioning", "smell", "unhygienic", "pest"},
-        "negation_words": [],
-    }
-}
-
-MAX_TEXT_LENGTH = 5000
-
-# --- DATA STRUCTURES ---
-
-@dataclass
-class SubmissionRecord:
-    """Stores a record of a submission for duplicate detection."""
-    text: str
-    category: str
-    priority: str
-    timestamp: datetime
-    submission_hash: str
-    is_escalated: bool = False  # Track if this submission was an escalation
-
-@dataclass
-class DuplicateAnalysis:
-    """Encapsulates the result of duplicate detection."""
-    is_duplicate: bool
-    similar_count: int
-    escalation_applied: bool
-    original_priority: str
-    escalated_priority: str
-
-@dataclass
-class ClassificationResult:
-    """Comprehensive result of the classification process."""
-    category: str
-    priority: str
-    confidence: float
-    priority_score: float
-    matched_keywords: Dict[str, List[str]] = field(default_factory=dict)
-    priority_factors: List[str] = field(default_factory=list)
-    duplicate_analysis: Optional[DuplicateAnalysis] = None
-    error: Optional[str] = None
-
-# --- CORE LOGIC CLASSES ---
-
-class DuplicateDetector:
-    """Manages submission history and detects duplicates for priority escalation."""
-    def __init__(self, similarity_threshold=0.6, escalation_threshold=2, retention_hours=168):
-        self.similarity_threshold = similarity_threshold
-        self.escalation_threshold = escalation_threshold
-        self.retention_hours = retention_hours
-        self.submissions: List[SubmissionRecord] = []
-
-    def clean_old_submissions(self):
-        """Removes submissions older than the retention period."""
-        cutoff_time = datetime.now() - timedelta(hours=self.retention_hours)
-        self.submissions = [s for s in self.submissions if s.timestamp > cutoff_time]
-        logger.info(f"Cleaned old submissions. Current count: {len(self.submissions)}")
-
-    def generate_content_hash(self, text: str) -> str:
-        """Generates a hash for exact duplicate detection."""
-        normalized = re.sub(r'\s+', ' ', text.lower().strip())
-        return hashlib.md5(normalized.encode()).hexdigest()
-
-    def calculate_similarity(self, text1: str, text2: str) -> float:
-        """Calculates similarity using a weighted combination of SequenceMatcher and Jaccard similarity."""
-        if not text1 or not text2:
-            return 0.0
-        norm1 = re.sub(r'\s+', ' ', text1.lower().strip())
-        norm2 = re.sub(r'\s+', ' ', text2.lower().strip())
-
-        sequence_sim = difflib.SequenceMatcher(None, norm1, norm2).ratio()
-        
-        words1 = set(norm1.split())
-        words2 = set(norm2.split())
-        if not words1 and not words2:
-            word_sim = 1.0
-        elif not words1 or not words2:
-            word_sim = 0.0
-        else:
-            intersection = len(words1.intersection(words2))
-            union = len(words1.union(words2))
-            word_sim = intersection / union
-        
-        return (sequence_sim * 0.4) + (word_sim * 0.6)
-
-    def categories_compatible(self, cat1: str, cat2: str) -> bool:
-        """Determines if two categories are related for duplicate detection."""
-        if cat1 == cat2:
-            return True
-        # Safety and equipment issues are often related in practical scenarios
-        safety_equipment = {"Safety Concern", "Machine/Equipment Issue"}
-        return cat1 in safety_equipment and cat2 in safety_equipment
-
-    def analyze_and_store(self, text: str, category: str, priority: str) -> DuplicateAnalysis:
-        """Analyzes a new submission for duplicates, applies escalation, and stores it."""
-        self.clean_old_submissions()
-        
-        similar_submissions = []
-        new_hash = self.generate_content_hash(text)
-        
-        # Find similar submissions that match or are compatible in category
-        for existing in self.submissions:
-            if new_hash == existing.submission_hash or \
-               (self.categories_compatible(category, existing.category) and \
-               self.calculate_similarity(text, existing.text) >= self.similarity_threshold):
-                similar_submissions.append(existing)
-        
-        similar_low_medium_count = len([s for s in similar_submissions if s.priority in (Priority.LOW.value, Priority.MEDIUM.value)])
-        
-        escalation_applied = False
-        escalated_priority = priority
-        
-        if Priority(priority) in (Priority.LOW, Priority.MEDIUM) and similar_low_medium_count >= self.escalation_threshold:
-            escalation_applied = True
-            escalated_priority = Priority.CRITICAL.value
-            logger.info(f"Escalating from {priority} to {escalated_priority} due to {similar_low_medium_count} similar submissions.")
-        elif Priority(priority) == Priority.CRITICAL and len(similar_submissions) > 0:
-             # If it's already critical, just note that it was a repeated critical issue
-             escalation_applied = True
-             logger.info(f"Submission already Critical. Similar submissions found: {len(similar_submissions)}. Marking as escalation_applied.")
-        
-        # Store the new submission
-        submission = SubmissionRecord(
-            text=text,
-            category=category,
-            priority=escalated_priority,
-            timestamp=datetime.now(),
-            submission_hash=new_hash,
-            is_escalated=escalation_applied
-        )
-        self.submissions.append(submission)
-        logger.info(f"New submission added. Total submissions: {len(self.submissions)}")
-        
-        return DuplicateAnalysis(
-            is_duplicate=len(similar_submissions) > 0,
-            similar_count=len(similar_submissions),
-            escalation_applied=escalation_applied,
-            original_priority=priority,
-            escalated_priority=escalated_priority
-        )
-
-class FeedbackClassifier:
-    """Main classifier class to determine category and priority."""
-    def __init__(self):
-        self.knowledge_base = KNOWLEDGE_BASE
-        self.duplicate_detector = DuplicateDetector()
-
-    def normalize_text(self, text: str) -> List[str]:
-        """Tokenizes and normalizes text for analysis."""
-        return re.findall(r'\b\w+\b', text.lower())
-
-    def calculate_category_score(self, text_tokens: List[str], category: str) -> Tuple[float, Dict[str, List[str]]]:
-        """Calculates a category score based on keyword matches and context."""
-        category_data = self.knowledge_base[category]
-        all_keywords = {
-            "critical": category_data.get("critical_keywords", set()),
-            "high": category_data.get("high_keywords", set()),
-            "medium": category_data.get("medium_keywords", set()),
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Feedback Classification System</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        negation_words = category_data.get("negation_words", set())
 
-        scores = {"critical": 0, "high": 0, "medium": 0}
-        matched_keywords = {"critical": [], "high": [], "medium": []}
-
-        for i, token in enumerate(text_tokens):
-            weight = 0
-            level = None
-            if token in all_keywords["critical"]:
-                weight = 3.0
-                level = "critical"
-            elif token in all_keywords["high"]:
-                weight = 2.0
-                level = "high"
-            elif token in all_keywords["medium"]:
-                weight = 1.0
-                level = "medium"
-
-            if weight > 0:
-                is_negated = any(text_tokens[j] in negation_words for j in range(max(0, i-3), min(len(text_tokens), i+4)))
-                if not is_negated:
-                    scores[level] += weight
-                    matched_keywords[level].append(token)
-        
-        # Calculate a total score, but also keep track of individual levels
-        total_score = scores["critical"] + scores["high"] + scores["medium"]
-        
-        return total_score, matched_keywords
-
-    def determine_priority(self, total_scores: Dict[str, float], matched_keywords: Dict[str, List[str]], text: str) -> Tuple[Priority, float, List[str]]:
-        """Determines the final priority based on scores and explicit text."""
-        priority_factors = []
-        normalized_text = " ".join(self.normalize_text(text))
-        
-        # Check for explicit user-submitted impact level (from the prompt image)
-        explicit_impact_level = None
-        impact_match = re.search(r'impact level: (\w+)', normalized_text, re.IGNORECASE)
-        if impact_match and impact_match.group(1).capitalize() in IMPACT_LEVELS:
-            explicit_impact_level = impact_match.group(1).capitalize()
-            priority_factors.append(f"Explicit Impact Level: {explicit_impact_level}")
-
-        # Check for direct, high-impact keywords
-        critical_keyword_score = total_scores["Safety Concern"]["critical"] + total_scores["Machine/Equipment Issue"]["critical"]
-        high_keyword_score = total_scores["Safety Concern"]["high"] + total_scores["Machine/Equipment Issue"]["high"]
-        
-        final_priority = Priority.LOW
-        priority_score = 1.0
-
-        if explicit_impact_level == "Critical" or critical_keyword_score >= 3.0:
-            final_priority = Priority.CRITICAL
-            priority_score = 4.5
-            if critical_keyword_score >= 3.0: priority_factors.append("Direct Critical indicators detected.")
-        elif explicit_impact_level == "Significant" or high_keyword_score >= 2.0:
-            final_priority = Priority.HIGH
-            priority_score = 3.5
-            if high_keyword_score >= 2.0: priority_factors.append("High severity indicators.")
-        elif explicit_impact_level == "Moderate" or total_scores.get("Process Improvement Idea", {}).get("high", 0) > 0 or total_scores.get("Other", {}).get("medium", 0) > 0:
-            final_priority = Priority.MEDIUM
-            priority_score = 2.5
-            if explicit_impact_level == "Moderate": priority_factors.append("Explicit Impact Level: Moderate")
-            if total_scores.get("Process Improvement Idea", {}).get("high", 0) > 0: priority_factors.append("High-level process improvement keywords found.")
-            if total_scores.get("Other", {}).get("medium", 0) > 0: priority_factors.append("Facilities issue keywords found.")
-        else:
-            final_priority = Priority.LOW
-            priority_score = 1.5
-            priority_factors.append("Low severity or general suggestion.")
-        
-        return final_priority, priority_score, priority_factors
-
-    def calculate_confidence(self, category_scores: Dict[str, float], best_category: str) -> float:
-        """Calculates classification confidence based on score separation."""
-        sorted_scores = sorted(category_scores.values(), reverse=True)
-        best_score = sorted_scores[0] if sorted_scores else 0
-        
-        if best_score == 0:
-            return 0.1
-        
-        second_best_score = sorted_scores[1] if len(sorted_scores) > 1 else 0
-        
-        # Confidence is a function of both the absolute best score and the gap to the second best
-        if best_score > 0 and best_score != second_best_score:
-            separation_factor = (best_score - second_best_score) / best_score
-            confidence = min(max(separation_factor * 0.75 + (best_score / max(sum(category_scores.values()), 1)) * 0.25, 0.1), 1.0)
-        else:
-            confidence = min(max(best_score * 0.8, 0.1), 1.0)
-            
-        return confidence
-        
-    def classify(self, text: str) -> ClassificationResult:
-        """The main classification pipeline."""
-        if not text or not text.strip():
-            logger.warning("Classification error: Empty text provided.")
-            return ClassificationResult(category="Other", priority=Priority.LOW.value, confidence=0.1, priority_score=1.0, error="Empty text provided")
-
-        try:
-            text_tokens = self.normalize_text(text)
-            category_scores = {}
-            all_matched_keywords = {}
-
-            # Calculate scores for all categories
-            for category in self.knowledge_base.keys():
-                score, matches = self.calculate_category_score(text_tokens, category)
-                category_scores[category] = score
-                all_matched_keywords[category] = matches
-            
-            # Find the best category
-            best_category = max(category_scores, key=category_scores.get, default="Other")
-            
-            # Determine initial priority based on the text content
-            initial_priority, initial_priority_score, priority_factors = self.determine_priority(category_scores, all_matched_keywords, text)
-            
-            # Check for duplicates and apply escalation logic
-            duplicate_analysis = self.duplicate_detector.analyze_and_store(text, best_category, initial_priority.value)
-            
-            final_priority = duplicate_analysis.escalated_priority
-            
-            if duplicate_analysis.escalation_applied:
-                priority_factors.append(f"ESCALATED TO CRITICAL: {duplicate_analysis.similar_count} similar submissions detected.")
-                priority_factors.append(f"Original Priority: {duplicate_analysis.original_priority} -> Final Priority: {final_priority}")
-            
-            confidence = self.calculate_confidence(category_scores, best_category)
-            
-            result = ClassificationResult(
-                category=best_category,
-                priority=final_priority,
-                confidence=round(confidence, 3),
-                priority_score=round(initial_priority_score, 2),
-                matched_keywords=all_matched_keywords.get(best_category, {}),
-                priority_factors=priority_factors,
-                duplicate_analysis=duplicate_analysis
-            )
-            
-            logger.info(f"Classification Result: Category={result.category}, Priority={result.priority}, Confidence={result.confidence}, Escalation_Applied={result.duplicate_analysis.escalation_applied}")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Classification error: {e}", exc_info=True)
-            return ClassificationResult(
-                category="Other", priority=Priority.LOW.value, confidence=0.1,
-                priority_score=1.0, error=str(e)
-            )
-
-classifier = FeedbackClassifier()
-
-# --- FLASK API ENDPOINTS ---
-
-@app.route("/classify", methods=['POST'])
-def handle_classify():
-    data = request.get_json()
-    if not data or 'text' not in data:
-        logger.warning("Missing 'text' field in request.")
-        return jsonify({"error": "Missing 'text' field"}), 400
-    
-    text = data.get('text', '')
-    if len(text) > MAX_TEXT_LENGTH:
-        logger.warning(f"Text exceeds MAX_TEXT_LENGTH ({MAX_TEXT_LENGTH} chars).")
-        return jsonify({"error": f"Text exceeds {MAX_TEXT_LENGTH} characters"}), 400
-    
-    result = classifier.classify(text)
-    
-    response = {
-        "category": result.category,
-        "autocategory": result.category,
-        "priority": result.priority,
-        "autopriority": result.priority,
-        "confidence": result.confidence,
-        "priority_score": result.priority_score,
-        "matched_keywords": result.matched_keywords,
-        "priority_factors": result.priority_factors
-    }
-    
-    if result.duplicate_analysis:
-        response["duplicate_analysis"] = {
-            "is_duplicate": result.duplicate_analysis.is_duplicate,
-            "similar_count": result.duplicate_analysis.similar_count,
-            "escalation_applied": result.duplicate_analysis.escalation_applied,
-            "original_priority": result.duplicate_analysis.original_priority,
-            "escalated_priority": result.duplicate_analysis.escalated_priority
+        :root {
+            --primary-color: #2563eb;
+            --primary-hover: #1d4ed8;
+            --secondary-color: #f8fafc;
+            --accent-color: #0ea5e9;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --error-color: #ef4444;
+            --critical-color: #dc2626;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --border-color: #e2e8f0;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+            --gradient-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
-    
-    logger.info(f"API Response: {response}")
-    return jsonify(response)
 
-@app.route("/duplicate_stats", methods=['GET'])
-def get_duplicate_stats():
-    classifier.duplicate_detector.clean_old_submissions()
-    submissions = classifier.duplicate_detector.submissions
-    
-    escalated_critical_count = len([s for s in submissions if s.is_escalated])
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--gradient-bg);
+            min-height: 100vh;
+            line-height: 1.6;
+            color: var(--text-primary);
+        }
 
-    response = {
-        "total_submissions_retained": len(submissions),
-        "escalated_critical_in_memory": escalated_critical_count,
-        "retention_hours": classifier.duplicate_detector.retention_hours,
-        "similarity_threshold": classifier.duplicate_detector.similarity_threshold,
-        "escalation_threshold": classifier.duplicate_detector.escalation_threshold
-    }
-    logger.info(f"Duplicate Stats: {response}")
-    return jsonify(response)
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
 
-@app.route("/")
-def home():
-    return """
-    <!DOCTYPE html>
-    <html><head><title>Enhanced Feedback Classification API</title>
-    </head><body>
-    <h1>Enhanced Feedback Classification API</h1>
-    <p>Use the <strong>POST /classify</strong> endpoint to classify text.</p>
-    <p>Use the <strong>GET /duplicate_stats</strong> endpoint for duplicate detection statistics.</p>
-    </body></html>
-    """
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+            color: white;
+        }
 
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({"error": "Endpoint not found"}), 404
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
 
-@app.errorhandler(500)
-def internal_error(error):
-    logger.error(f"Internal error: {error}", exc_info=True)
-    return jsonify({"error": "Internal server error"}), 500
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
 
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+        .main-card {
+            background: white;
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: var(--shadow-lg);
+            margin-bottom: 2rem;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .textarea-container {
+            position: relative;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 150px;
+            padding: 1rem;
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            resize: vertical;
+            background: var(--secondary-color);
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+            background: white;
+        }
+
+        .char-counter {
+            position: absolute;
+            bottom: 0.5rem;
+            right: 1rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 0.25rem 0.5rem;
+            border-radius: 6px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 0.875rem 2rem;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+        }
+
+        .btn:hover::before {
+            left: 100%;
+        }
+
+        .btn-primary {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-hover);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-secondary {
+            background: var(--secondary-color);
+            color: var(--text-primary);
+            border: 2px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: white;
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid transparent;
+            border-top: 2px solid currentColor;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .results-container {
+            display: none;
+            animation: slideUp 0.5s ease-out;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .result-card {
+            background: var(--secondary-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            border: 1px solid var(--border-color);
+            transition: all 0.3s ease;
+        }
+
+        .result-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .result-icon {
+            width: 2.5rem;
+            height: 2.5rem;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            color: white;
+        }
+
+        .category-icon {
+            background: var(--accent-color);
+        }
+
+        .priority-icon.Low {
+            background: var(--success-color);
+        }
+
+        .priority-icon.Medium {
+            background: var(--warning-color);
+        }
+
+        .priority-icon.High {
+            background: var(--error-color);
+        }
+
+        .priority-icon.Critical {
+            background: var(--critical-color);
+        }
+
+        .result-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .result-value {
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .confidence-bar {
+            background: var(--border-color);
+            height: 6px;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--error-color) 0%, var(--warning-color) 50%, var(--success-color) 100%);
+            transition: width 0.8s ease;
+            border-radius: 3px;
+        }
+
+        .details-section {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .details-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .keyword-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .tag {
+            background: var(--primary-color);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .tag.critical {
+            background: var(--critical-color);
+        }
+
+        .tag.high {
+            background: var(--error-color);
+        }
+
+        .tag.medium {
+            background: var(--warning-color);
+        }
+
+        .factors-list {
+            list-style: none;
+        }
+
+        .factors-list li {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .factors-list li:last-child {
+            border-bottom: none;
+        }
+
+        .escalation-alert {
+            background: linear-gradient(135deg, #fee2e2, #fecaca);
+            border: 2px solid var(--critical-color);
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .escalation-alert .icon {
+            color: var(--critical-color);
+            font-size: 1.5rem;
+        }
+
+        .stats-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 16px;
+            padding: 2rem;
+            color: white;
+            margin-top: 2rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1rem;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-label {
+            opacity: 0.8;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .main-card {
+                padding: 1.5rem;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .results-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .error-message {
+            background: #fee2e2;
+            color: #dc2626;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1><i class="fas fa-brain"></i> Enhanced Feedback Classification</h1>
+            <p>AI-powered feedback analysis with intelligent priority detection and duplicate escalation</p>
+        </header>
+
+        <div class="main-card">
+            <form id="classificationForm">
+                <div class="form-group">
+                    <label for="feedbackText">
+                        <i class="fas fa-comment-alt"></i> Enter your feedback or concern
+                    </label>
+                    <div class="textarea-container">
+                        <textarea 
+                            id="feedbackText" 
+                            name="text" 
+                            placeholder="Describe your safety concern, equipment issue, improvement idea, or other feedback..."
+                            maxlength="5000"
+                            required
+                        ></textarea>
+                        <div class="char-counter">
+                            <span id="charCount">0</span>/5000
+                        </div>
+                    </div>
+                </div>
+
+                <div class="button-group">
+                    <button type="submit" class="btn btn-primary" id="classifyBtn">
+                        <i class="fas fa-search"></i>
+                        <span>Classify Feedback</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="clearBtn">
+                        <i class="fas fa-eraser"></i>
+                        Clear Form
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="statsBtn">
+                        <i class="fas fa-chart-bar"></i>
+                        View Stats
+                    </button>
+                </div>
+            </form>
+
+            <div id="errorContainer"></div>
+        </div>
+
+        <div id="resultsContainer" class="results-container">
+            <div class="main-card">
+                <div id="escalationAlert" class="escalation-alert" style="display: none;">
+                    <i class="fas fa-exclamation-triangle icon"></i>
+                    <div>
+                        <strong>Priority Escalated!</strong>
+                        <div id="escalationMessage"></div>
+                    </div>
+                </div>
+
+                <div class="results-grid">
+                    <div class="result-card">
+                        <div class="result-header">
+                            <div class="result-icon category-icon">
+                                <i class="fas fa-tag"></i>
+                            </div>
+                            <div>
+                                <div class="result-title">Category</div>
+                                <div class="result-value" id="categoryResult">-</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="result-card">
+                        <div class="result-header">
+                            <div class="result-icon priority-icon" id="priorityIcon">
+                                <i class="fas fa-flag"></i>
+                            </div>
+                            <div>
+                                <div class="result-title">Priority</div>
+                                <div class="result-value" id="priorityResult">-</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="result-card">
+                        <div class="result-header">
+                            <div class="result-icon" style="background: var(--accent-color);">
+                                <i class="fas fa-percentage"></i>
+                            </div>
+                            <div style="flex: 1;">
+                                <div class="result-title">Confidence</div>
+                                <div class="result-value" id="confidenceResult">-</div>
+                                <div class="confidence-bar">
+                                    <div class="confidence-fill" id="confidenceFill" style="width: 0%"></div>
+                                </div>
+                                <small class="text-secondary" id="confidenceLabel">Classification accuracy</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="details-section">
+                    <div class="details-title">
+                        <i class="fas fa-info-circle"></i>
+                        Analysis Details
+                    </div>
+                    
+                    <div id="keywordsSection" style="margin-bottom: 1.5rem;">
+                        <h4 style="margin-bottom: 0.5rem;">Detected Keywords</h4>
+                        <div id="keywordTags" class="keyword-tags"></div>
+                    </div>
+
+                    <div id="factorsSection">
+                        <h4 style="margin-bottom: 0.5rem;">Priority Factors</h4>
+                        <ul id="factorsList" class="factors-list"></ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="statsContainer" class="stats-card" style="display: none;">
+            <h3><i class="fas fa-chart-line"></i> System Statistics</h3>
+            <div class="stats-grid" id="statsGrid">
+                <!-- Stats will be populated here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:5000'; // Update this to match your Flask server
+        
+        // DOM elements
+        const form = document.getElementById('classificationForm');
+        const textarea = document.getElementById('feedbackText');
+        const charCount = document.getElementById('charCount');
+        const classifyBtn = document.getElementById('classifyBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const statsBtn = document.getElementById('statsBtn');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const errorContainer = document.getElementById('errorContainer');
+        const statsContainer = document.getElementById('statsContainer');
+
+        // Character counter
+        textarea.addEventListener('input', function() {
+            const count = this.value.length;
+            charCount.textContent = count;
+            
+            if (count > 4500) {
+                charCount.style.color = 'var(--error-color)';
+            } else if (count > 4000) {
+                charCount.style.color = 'var(--warning-color)';
+            } else {
+                charCount.style.color = 'var(--text-secondary)';
+            }
+        });
+
+        // Form submission
+        form.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            await classifyFeedback();
+        });
+
+        // Clear button
+        clearBtn.addEventListener('click', function() {
+            textarea.value = '';
+            charCount.textContent = '0';
+            charCount.style.color = 'var(--text-secondary)';
+            resultsContainer.style.display = 'none';
+            errorContainer.innerHTML = '';
+        });
+
+        // Stats button
+        statsBtn.addEventListener('click', async function() {
+            await loadStats();
+        });
+
+        async function classifyFeedback() {
+            const text = textarea.value.trim();
+            if (!text) return;
+
+            // Show loading state
+            const originalContent = classifyBtn.innerHTML;
+            classifyBtn.innerHTML = '<div class="loading"></div> Analyzing...';
+            classifyBtn.disabled = true;
+            errorContainer.innerHTML = '';
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/classify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ text: text })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                displayResults(result);
+                
+            } catch (error) {
+                showError(`Failed to classify feedback: ${error.message}. Make sure the Flask server is running on ${API_BASE_URL}`);
+            } finally {
+                classifyBtn.innerHTML = originalContent;
+                classifyBtn.disabled = false;
+            }
+        }
+
+        function displayResults(result) {
+            // Update category
+            document.getElementById('categoryResult').textContent = result.category;
+
+            // Update priority with icon
+            const priorityIcon = document.getElementById('priorityIcon');
+            priorityIcon.className = `result-icon priority-icon ${result.priority}`;
+            document.getElementById('priorityResult').textContent = result.priority;
+
+            // Update confidence
+            const confidence = Math.round(result.confidence * 100);
+            document.getElementById('confidenceResult').textContent = `${confidence}%`;
+            document.getElementById('confidenceFill').style.width = `${confidence}%`;
+            
+            // Update confidence label
+            let confidenceLabel = 'Low accuracy';
+            if (confidence >= 80) confidenceLabel = 'High accuracy';
+            else if (confidence >= 60) confidenceLabel = 'Good accuracy';
+            else if (confidence >= 40) confidenceLabel = 'Moderate accuracy';
+            document.getElementById('confidenceLabel').textContent = confidenceLabel;
+
+            // Handle escalation alert
+            const escalationAlert = document.getElementById('escalationAlert');
+            const escalationMessage = document.getElementById('escalationMessage');
+            
+            if (result.duplicate_analysis && result.duplicate_analysis.escalation_applied) {
+                escalationAlert.style.display = 'flex';
+                escalationMessage.innerHTML = `
+                    This issue has been escalated to <strong>CRITICAL</strong> priority due to 
+                    ${result.duplicate_analysis.similar_count} similar submissions detected.
+                    <br><small>Original priority: ${result.duplicate_analysis.original_priority}</small>
+                `;
+            } else {
+                escalationAlert.style.display = 'none';
+            }
+
+            // Display keywords
+            const keywordTags = document.getElementById('keywordTags');
+            keywordTags.innerHTML = '';
+            
+            if (result.matched_keywords) {
+                ['critical', 'high', 'medium'].forEach(level => {
+                    if (result.matched_keywords[level] && result.matched_keywords[level].length > 0) {
+                        result.matched_keywords[level].forEach(keyword => {
+                            const tag = document.createElement('span');
+                            tag.className = `tag ${level}`;
+                            tag.textContent = keyword;
+                            keywordTags.appendChild(tag);
+                        });
+                    }
+                });
+            }
+
+            // Display priority factors
+            const factorsList = document.getElementById('factorsList');
+            factorsList.innerHTML = '';
+            
+            if (result.priority_factors) {
+                result.priority_factors.forEach(factor => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<i class="fas fa-check-circle" style="color: var(--success-color);"></i> ${factor}`;
+                    factorsList.appendChild(li);
+                });
+            }
+
+            // Show results
+            resultsContainer.style.display = 'block';
+            resultsContainer.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        async function loadStats() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/duplicate_stats`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const stats = await response.json();
+                displayStats(stats);
+                
+            } catch (error) {
+                showError(`Failed to load stats: ${error.message}`);
+            }
+        }
+
+        function displayStats(stats) {
+            const statsGrid = document.getElementById('statsGrid');
+            statsGrid.innerHTML = `
+                <div class="stat-item">
+                    <div class="stat-value">${stats.total_submissions_retained}</div>
+                    <div class="stat-label">Total Submissions</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">${stats.escalated_critical_in_memory}</div>
+                    <div class="stat-label">Escalated to Critical</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">${stats.retention_hours}h</div>
+                    <div class="stat-label">Retention Period</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">${Math.round(stats.similarity_threshold * 100)}%</div>
+                    <div class="stat-label">Similarity Threshold</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value">${stats.escalation_threshold}</div>
+                    <div class="stat-label">Escalation Threshold</div>
+                </div>
+            `;
+
+            statsContainer.style.display = 'block';
+            statsContainer.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function showError(message) {
+            errorContainer.innerHTML = `
+                <div class="error-message">
+                    <i class="fas fa-exclamation-circle"></i>
+                    ${message}
+                </div>
+            `;
+        }
+
+        // Auto-focus textarea on load
+        document.addEventListener('DOMContentLoaded', function() {
+            textarea.focus();
+        });
+    </script>
+</body>
+</html>
