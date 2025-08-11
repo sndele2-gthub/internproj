@@ -174,20 +174,27 @@ def home():
 def classify_route():
     """Endpoint for classifying feedback text. Expects a JSON payload with a 'text' field."""
     try:
-        data = request.get_json()
-        if not data:
-            logging.error("No JSON payload received.")
-            return jsonify({"error": "No JSON payload provided."}), 400
+        # Use silent=True to prevent Flask from automatically raising an error
+        # if the Content-Type is application/json but the body is malformed.
+        data = request.get_json(silent=True)
 
+        if data is None:
+            raw_data = request.data.decode('utf-8', errors='ignore')
+            logging.error(f"Request body is not valid JSON or is empty. Raw data received: '{raw_data[:200]}...'")
+            return jsonify({"error": "Request body must be valid JSON."}), 400
+        
         text = data.get("text")
+
+        # Explicitly check if 'text' is a string and not None
         if not isinstance(text, str):
-            logging.warning(f"Invalid 'text' field type: {type(text)}. Expected string.")
+            logging.warning(f"Invalid 'text' field type: {type(text)}. Expected string. Received data: {data}")
             return jsonify({"error": "Invalid or missing 'text' field in JSON payload. Expected a string."}), 400
         
         if not text.strip():
-            logging.warning("Received empty 'text' field.")
-            return jsonify({"error": "Text field cannot be empty."}), 400
+            logging.warning("Received empty 'text' field after stripping whitespace.")
+            return jsonify({"error": "Text field cannot be empty or just whitespace."}), 400
 
+        logging.info(f"Received text for classification: '{text[:100]}...'") # Log the received text
         result = classifier_logic.classify_and_process(text)
         
         # Format matched_keywords for consistent JSON output (even if empty)
@@ -238,6 +245,4 @@ def stats_route():
         return jsonify({"error": "An internal server error occurred while fetching statistics. Please check server logs."}), 500
 
 if __name__ == "__main__":
-    # Run the Flask application. debug=True enables reloader and debugger.
-    # For production, set debug=False and use a production-ready WSGI server like Gunicorn.
     app.run(debug=True, host="0.0.0.0", port=5000)
