@@ -107,7 +107,6 @@ class ClassifierLogic:
             explicit_level = match.group(1).capitalize()
             factors.append(f"Explicit Impact Level: {explicit_level}")
 
-        # Prioritize Safety/Equipment critical keywords
         critical_score = scores.get("Safety Concern", 0) + scores.get("Machine/Equipment Issue", 0)
         
         if explicit_level == "Critical" or critical_score >= 3.0:
@@ -163,14 +162,13 @@ class ClassifierLogic:
         if escalation:
             factors.append(f"ESCALATED TO CRITICAL: {similar_count} similar reports found.")
         
-        # Simple confidence calculation
         confidence = 0.5 + (scores.get(best_category, 0) / (sum(scores.values()) + 1) * 0.5)
         
         return ClassificationResult(best_category, final_priority, round(confidence, 3), keywords.get(best_category, {}), factors, is_duplicate, escalation)
 
 classifier_logic = ClassifierLogic()
 
-# --- Flask Routes ---
+# --- Flask Routes and UI ---
 @app.route("/", methods=["GET", "POST"])
 def home():
     results = None
@@ -178,38 +176,123 @@ def home():
         text = request.form.get("feedback_text", "")
         results = classifier_logic.classify_and_process(text)
 
-    # HTML content for the single-page UI
     html_content = """
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Feedback Classifier</title>
+        <title>AI Feedback Classifier</title>
         <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #f0f2f5; color: #333; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-            .container { background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); width: 100%; max-width: 600px; margin-top: 20px; }
-            h1 { color: #1a1a1a; text-align: center; margin-bottom: 20px; }
-            form { display: flex; flex-direction: column; }
-            textarea { width: 100%; height: 150px; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; margin-bottom: 20px; resize: vertical; }
-            button { padding: 12px 20px; background-color: #007bff; color: white; border: none; border-radius: 8px; font-size: 18px; cursor: pointer; transition: background-color 0.3s; }
-            button:hover { background-color: #0056b3; }
-            .results { margin-top: 30px; border-top: 2px solid #e0e0e0; padding-top: 20px; }
-            .results h2 { color: #007bff; }
-            .result-item { margin-bottom: 15px; }
-            .result-item strong { display: block; font-size: 1.1em; color: #555; }
-            .result-item span, .result-item ul { font-size: 1em; color: #333; margin-top: 5px; margin-left: 10px; }
-            .priority-critical { color: #d9534f; font-weight: bold; }
-            .priority-high { color: #f0ad4e; font-weight: bold; }
-            .priority-medium { color: #5bc0de; font-weight: bold; }
-            .priority-low { color: #5cb85c; }
+            :root {
+                --bg-color: #1a1a2e;
+                --card-bg-color: #2c2c54;
+                --text-color: #e0e0e0;
+                --primary-color: #007bff;
+                --critical-color: #e74c3c;
+                --high-color: #f39c12;
+                --medium-color: #3498db;
+                --low-color: #2ecc71;
+            }
+            body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background-color: var(--bg-color);
+                color: var(--text-color);
+                margin: 0;
+                padding: 20px;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                min-height: 100vh;
+            }
+            .container {
+                background: var(--card-bg-color);
+                padding: 30px;
+                border-radius: 12px;
+                box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+                width: 100%;
+                max-width: 600px;
+                margin-top: 20px;
+            }
+            h1 {
+                color: #ffffff;
+                text-align: center;
+                margin-bottom: 20px;
+            }
+            form {
+                display: flex;
+                flex-direction: column;
+            }
+            textarea {
+                width: 100%;
+                height: 150px;
+                padding: 12px;
+                border: 1px solid #4a4a75;
+                border-radius: 8px;
+                font-size: 16px;
+                margin-bottom: 20px;
+                resize: vertical;
+                background-color: #3b3b6b;
+                color: var(--text-color);
+            }
+            button {
+                padding: 12px 20px;
+                background-color: var(--primary-color);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 18px;
+                cursor: pointer;
+                transition: background-color 0.3s;
+            }
+            button:hover {
+                background-color: #0056b3;
+            }
+            .results {
+                margin-top: 30px;
+                border-top: 1px solid #4a4a75;
+                padding-top: 20px;
+            }
+            .results h2 {
+                color: var(--primary-color);
+                margin-bottom: 15px;
+            }
+            .result-item {
+                margin-bottom: 12px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .result-item strong {
+                font-size: 1em;
+                color: #b0b0d0;
+                flex-shrink: 0;
+            }
+            .result-item span, .result-item ul {
+                font-size: 1em;
+                margin: 0;
+            }
+            .result-item ul {
+                list-style-type: none;
+                padding-left: 0;
+            }
+            .result-item ul li {
+                background: #3b3b6b;
+                padding: 5px 10px;
+                border-radius: 6px;
+                margin-bottom: 5px;
+            }
+            .priority-critical { color: var(--critical-color); font-weight: bold; }
+            .priority-high { color: var(--high-color); font-weight: bold; }
+            .priority-medium { color: var(--medium-color); font-weight: bold; }
+            .priority-low { color: var(--low-color); }
         </style>
     </head>
     <body>
-        <h1>Feedback Classification & Prioritization</h1>
+        <h1>AI Feedback Classification</h1>
         <div class="container">
             <form method="post">
-                <textarea name="feedback_text" placeholder="Describe the issue or suggestion... (e.g., 'The conveyor belt is broken, this is a major problem' or 'We need a new safety procedure for cleaning the spill')"></textarea>
+                <textarea name="feedback_text" placeholder="Describe the issue or suggestion..."></textarea>
                 <button type="submit">Classify Feedback</button>
             </form>
             {% if results %}
@@ -225,11 +308,11 @@ def home():
                 </div>
                 <div class="result-item">
                     <strong>Confidence:</strong>
-                    <span>{{ results.confidence }} (0.0-1.0)</span>
+                    <span>{{ results.confidence }}</span>
                 </div>
                 {% if results.priority_factors %}
                 <div class="result-item">
-                    <strong>Priority Factors:</strong>
+                    <strong>Factors:</strong>
                     <ul>
                         {% for factor in results.priority_factors %}
                         <li>{{ factor }}</li>
@@ -237,12 +320,10 @@ def home():
                     </ul>
                 </div>
                 {% endif %}
-                {% if results.is_duplicate %}
                 <div class="result-item">
                     <strong>Duplicate Status:</strong>
                     <span>{{ "Duplicate" if results.is_duplicate else "Not a Duplicate" }} (Escalation Applied: {{ "Yes" if results.escalation_applied else "No" }})</span>
                 </div>
-                {% endif %}
             </div>
             {% endif %}
         </div>
