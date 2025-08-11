@@ -11,8 +11,10 @@ from datetime import datetime, timedelta
 import math
 import hashlib
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging to display INFO messages and above
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 
 class Priority(Enum):
@@ -28,36 +30,42 @@ KNOWLEDGE_BASE = {
             # Critical safety indicators (weight: 3.0)
             "emergency": 3.0, "fire": 3.0, "explosion": 3.0, "toxic": 3.0, "unconscious": 3.0, 
             "trapped": 3.0, "evacuation": 3.0, "severe": 3.0, "blood": 3.0, "collapsed": 3.0,
+            "fatal": 3.0, "imminent": 3.0, "danger": 3.0, "critical": 3.0, "urgent": 3.0,
             
             # High priority safety (weight: 2.0)
-            "danger": 2.0, "hazard": 2.0, "unsafe": 2.0, "injury": 2.0, "accident": 2.0, 
+            "hazard": 2.0, "unsafe": 2.0, "injury": 2.0, "accident": 2.0, 
             "hurt": 2.0, "injured": 2.0, "fall": 2.0, "cut": 2.0, "burn": 2.0, 
             "electrical": 2.0, "shock": 2.0, "blocked": 2.0, "spill": 2.0, "leak": 2.0,
+            "broken": 2.0, "rupture": 2.0,
             
             # Medium priority safety (weight: 1.0)
             "safety": 1.0, "risk": 1.0, "ppe": 1.0, "protective": 1.0, "guard": 1.0, 
             "warning": 1.0, "caution": 1.0, "helmet": 1.0, "gloves": 1.0, "training": 1.0,
+            "policy": 1.0, "procedure": 1.0, "inspection": 1.0, "audit": 1.0,
         },
-        "negation_words": ["not", "no", "without", "lacking", "need", "should", "could", "want", "wish", "suggest"],
-        "context_reducers": ["suggestion", "idea", "recommend", "propose", "think", "maybe", "could", "should"]
+        "negation_words": ["not", "no", "without", "lacking", "need", "should", "could", "want", "wish", "suggest", "could be", "might be", "if"],
+        "context_reducers": ["suggestion", "idea", "recommend", "propose", "think", "maybe", "could", "should", "future"]
     },
     
     "Machine/Equipment Issue": {
         "keywords": {
             # Critical equipment issues (weight: 3.0)
             "explosion": 3.0, "fire": 3.0, "complete failure": 3.0, "shutdown": 3.0, 
-            "total loss": 3.0, "major breakdown": 3.0, "catastrophic": 3.0,
+            "total loss": 3.0, "major breakdown": 3.0, "catastrophic": 3.0, "halted": 3.0,
+            "broken down": 3.0, "unusable": 3.0, "critical": 3.0, "emergency": 3.0,
             
             # High priority equipment (weight: 2.0)
             "broken": 2.0, "malfunction": 2.0, "down": 2.0, "stopped": 2.0, "jam": 2.0,
             "stuck": 2.0, "overheating": 2.0, "failure": 2.0, "error": 2.0, "crash": 2.0,
+            "damaged": 2.0, "faulty": 2.0, "leaking": 2.0, "no power": 2.0, "burnt out": 2.0,
             
             # Medium priority equipment (weight: 1.0)
             "machine": 1.0, "equipment": 1.0, "conveyor": 1.0, "motor": 1.0, "pump": 1.0,
             "repair": 1.0, "maintenance": 1.0, "noise": 1.0, "vibration": 1.0,
+            "rattling": 1.0, "squeaking": 1.0, "loose": 1.0, "worn": 1.0, "calibration": 1.0,
         },
-        "negation_words": ["not", "no", "without", "need", "should", "could", "want", "suggest"],
-        "context_reducers": ["suggestion", "idea", "recommend", "propose", "schedule", "plan"]
+        "negation_words": ["not", "no", "without", "need", "should", "could", "want", "suggest", "could be", "might be", "if"],
+        "context_reducers": ["suggestion", "idea", "recommend", "propose", "schedule", "plan", "future"]
     },
     
     "Process Improvement Idea": {
@@ -65,18 +73,21 @@ KNOWLEDGE_BASE = {
             "automate": 2.0, "streamline": 2.0, "optimize": 2.0, "revolutionize": 2.0,
             "improve": 1.0, "efficiency": 1.0, "productivity": 1.0, "enhance": 1.0,
             "suggestion": 0.5, "idea": 0.5, "recommend": 0.5, "think": 0.5,
+            "better": 1.0, "workflow": 1.0, "process": 1.0, "reduce waste": 1.0,
         },
-        "negation_words": [],
-        "context_reducers": []
+        "negation_words": ["not", "no", "without"], # less strict for ideas
+        "context_reducers": [] # ideas are inherently suggestions
     },
     
     "Other": {
         "keywords": {
             "supplies": 1.0, "training": 1.0, "lighting": 1.0, "parking": 1.0, 
             "temperature": 1.0, "break": 1.0, "lunch": 1.0, "bathroom": 1.0, 
-            "coffee": 1.0, "clean": 1.0, "organize": 1.0, "facilities": 1.0
+            "coffee": 1.0, "clean": 1.0, "organize": 1.0, "facilities": 1.0,
+            "heating": 1.0, "cooling": 1.0, "air conditioning": 1.0, "ventilation": 1.0,
+            "desk": 1.0, "chair": 1.0, "office": 1.0,
         },
-        "negation_words": ["urgent", "immediate", "critical", "emergency"],
+        "negation_words": ["urgent", "immediate", "critical", "emergency", "dangerous", "hazard"],
         "context_reducers": []
     }
 }
@@ -111,9 +122,9 @@ class ClassificationResult:
     error: Optional[str] = None
 
 class DuplicateDetector:
-    def __init__(self, similarity_threshold=0.75, escalation_threshold=3, retention_hours=168):
-        self.similarity_threshold = similarity_threshold
-        self.escalation_threshold = escalation_threshold
+    def __init__(self, similarity_threshold=0.6, escalation_threshold=2, retention_hours=168): # Adjusted for easier testing
+        self.similarity_threshold = similarity_threshold # Lowered threshold to detect more duplicates
+        self.escalation_threshold = escalation_threshold # Lowered to trigger escalation faster
         self.retention_hours = retention_hours
         self.submissions: List[SubmissionRecord] = []
         
@@ -121,14 +132,16 @@ class DuplicateDetector:
         self.escalation_rules = {
             Priority.LOW: Priority.CRITICAL,
             Priority.MEDIUM: Priority.CRITICAL,
-            Priority.HIGH: Priority.CRITICAL,
+            Priority.HIGH: Priority.CRITICAL, # High can also escalate if repeated
             Priority.CRITICAL: Priority.CRITICAL
         }
     
     def clean_old_submissions(self):
         """Remove submissions older than retention period"""
         cutoff_time = datetime.now() - timedelta(hours=self.retention_hours)
+        # Filter in reverse to avoid index issues if removal is extensive, though not strictly needed for this simple list filter
         self.submissions = [s for s in self.submissions if s.timestamp > cutoff_time]
+        logger.info(f"Cleaned old submissions. Current submission count: {len(self.submissions)}")
     
     def generate_content_hash(self, text: str) -> str:
         """Generate hash for exact duplicate detection"""
@@ -136,96 +149,107 @@ class DuplicateDetector:
         return hashlib.md5(normalized.encode()).hexdigest()
     
     def calculate_similarity(self, text1: str, text2: str) -> float:
-        """Calculate similarity between two texts"""
+        """Calculate similarity between two texts using a combination of SequenceMatcher and Jaccard similarity"""
         if not text1 or not text2:
             return 0.0
         
-        # Normalize texts
+        # Normalize texts for comparison
         norm1 = re.sub(r'\s+', ' ', text1.lower().strip())
         norm2 = re.sub(r'\s+', ' ', text2.lower().strip())
         
-        # Use sequence matcher for overall similarity
+        # Use SequenceMatcher for overall sequence similarity
         sequence_sim = difflib.SequenceMatcher(None, norm1, norm2).ratio()
         
-        # Use word overlap (Jaccard similarity)
+        # Use word overlap (Jaccard similarity) for concept overlap
         words1 = set(norm1.split())
         words2 = set(norm2.split())
         if not words1 and not words2:
-            word_sim = 1.0
+            word_sim = 1.0 # Both empty, consider them identical
         elif not words1 or not words2:
-            word_sim = 0.0
+            word_sim = 0.0 # One empty, one not, consider them dissimilar
         else:
             intersection = len(words1.intersection(words2))
             union = len(words1.union(words2))
             word_sim = intersection / union
-        
-        # Weighted combination
-        return (sequence_sim * 0.4) + (word_sim * 0.6)
+            
+        # Weighted combination - adjust weights if one method proves more reliable
+        combined_similarity = (sequence_sim * 0.4) + (word_sim * 0.6)
+        logger.debug(f"Similarity between '{text1}' and '{text2}': {combined_similarity:.2f}")
+        return combined_similarity
     
     def find_similar_submissions(self, new_text: str, new_category: str) -> List[SubmissionRecord]:
-        """Find submissions similar to the new one"""
+        """Find submissions similar to the new one within the retention period."""
         similar = []
         new_hash = self.generate_content_hash(new_text)
         
         for existing in self.submissions:
-            # Check exact match first
+            # Check exact match first (hash)
             if new_hash == existing.submission_hash:
                 similar.append(existing)
+                logger.debug(f"Exact hash match found for: '{new_text}'")
                 continue
             
-            # Skip if completely different categories (unless safety/equipment)
+            # Skip if categories are not compatible (e.g., Safety vs. Process Improvement)
             if not self.categories_compatible(new_category, existing.category):
                 continue
             
-            # Calculate similarity
+            # Calculate similarity for non-exact matches within compatible categories
             similarity = self.calculate_similarity(new_text, existing.text)
             if similarity >= self.similarity_threshold:
                 similar.append(existing)
+                logger.debug(f"Similar submission found (Similarity: {similarity:.2f}): '{existing.text}'")
         
         return similar
     
     def categories_compatible(self, cat1: str, cat2: str) -> bool:
-        """Check if categories are compatible for duplicate detection"""
+        """Determines if two categories are related enough for duplicate detection."""
         if cat1 == cat2:
             return True
-        # Safety and equipment issues can be related
-        safety_equipment = ["Safety Concern", "Machine/Equipment Issue"]
+        # Safety and equipment issues are often related in practical scenarios
+        safety_equipment = {"Safety Concern", "Machine/Equipment Issue"}
         return cat1 in safety_equipment and cat2 in safety_equipment
-    
+
     def analyze_submission(self, text: str, category: str, priority: str) -> DuplicateAnalysis:
-        """Analyze submission for duplicates and escalation"""
-        self.clean_old_submissions()
+        """Analyze submission for duplicates and apply escalation rules."""
+        self.clean_old_submissions() # Clean before analysis
         
-        # Find similar submissions
         similar_submissions = self.find_similar_submissions(text, category)
         
-        # Count submissions that should trigger escalation
+        # Count submissions that are relevant for escalating existing low/medium/high priority issues
+        # It now considers LOW, MEDIUM, HIGH as potentially escalatable if they were the original priority
         escalatable_count = len([s for s in similar_submissions 
-                               if s.priority in [Priority.LOW.value, Priority.MEDIUM.value]])
+                                 if Priority(s.priority) in [Priority.LOW, Priority.MEDIUM, Priority.HIGH]])
         
-        # Determine if escalation is needed
         should_escalate = escalatable_count >= self.escalation_threshold
-        escalated_priority = priority
+        escalated_priority = priority # Start with the current determined priority
         
+        # If escalation threshold is met AND the current priority is one that CAN be escalated
         if should_escalate and Priority(priority) in self.escalation_rules:
-            escalated_priority = Priority.CRITICAL.value
+            # If the current priority is already CRITICAL, keep it CRITICAL
+            if Priority(priority) == Priority.CRITICAL:
+                escalated_priority = Priority.CRITICAL.value
+                logger.info(f"Submission already Critical, maintaining priority due to {escalatable_count} similar submissions.")
+            else:
+                escalated_priority = self.escalation_rules[Priority(priority)].value # Escalate to Critical
+                logger.info(f"Escalating from {priority} to {escalated_priority} due to {escalatable_count} similar submissions.")
         
-        # Store this submission
+        # Store this new submission for future duplicate checks
         submission = SubmissionRecord(
             text=text,
             category=category,
-            priority=escalated_priority,
+            priority=escalated_priority, # Store the escalated priority if it was applied
             timestamp=datetime.now(),
             submission_hash=self.generate_content_hash(text)
         )
         self.submissions.append(submission)
+        logger.info(f"New submission added to detector. Total submissions in memory: {len(self.submissions)}")
         
         return DuplicateAnalysis(
             is_duplicate=len(similar_submissions) > 0,
             similar_count=len(similar_submissions),
             escalation_applied=should_escalate,
-            original_priority=priority,
-            escalated_priority=escalated_priority
+            original_priority=priority, # This is the priority *before* escalation by the detector
+            escalated_priority=escalated_priority # This is the final priority after detector logic
         )
 
 class FeedbackClassifier:
@@ -253,73 +277,90 @@ class FeedbackClassifier:
             if word in keywords:
                 weight = keywords[word]
                 
-                # Check for negation context
+                # Check for negation context (within 3 words before or 4 words after)
                 negation_factor = 1.0
                 for j in range(max(0, i-3), min(len(words), i+4)):
                     if words[j] in negation_words:
-                        negation_factor = 0.3
+                        negation_factor = 0.3 # Reduce score significantly if negated
                         break
                 
-                # Check for context reducers
+                # Check for context reducers (anywhere in the text)
                 context_factor = 1.0
                 if any(reducer in normalized for reducer in context_reducers):
-                    context_factor = 0.6
+                    context_factor = 0.6 # Reduce score slightly if suggestion-like context
                 
                 adjusted_weight = weight * negation_factor * context_factor
                 total_score += adjusted_weight
                 matched_keywords.append(word)
         
-        # Normalize score
-        max_possible = sum(keywords.values()) * 0.3
+        # Normalize score relative to maximum possible score for this category
+        max_possible = sum(keywords.values()) # Using sum of all weights for normalization
         normalized_score = min(total_score / max_possible, 1.0) if max_possible > 0 else 0.0
         
         return normalized_score, matched_keywords
     
     def determine_priority(self, text: str, category: str, category_score: float) -> Tuple[Priority, float, List[str]]:
-        """Determine priority based on content analysis"""
+        """Determine priority based on content analysis, with refined thresholds."""
         normalized = self.normalize_text(text)
         factors = []
         
-        # Check for critical indicators
-        critical_words = ["emergency", "immediate", "urgent", "fire", "explosion", "dangerous", "fatal"]
-        critical_score = sum(1 for word in critical_words if word in normalized)
+        # Check for absolute critical indicators
+        critical_words = {"emergency", "immediate", "urgent", "fire", "explosion", "dangerous", "fatal", "critical", "major shutdown", "line stopped", "halted"}
+        absolute_critical_score = sum(1 for word in critical_words if word in normalized)
         
-        # Check category-specific priority indicators
+        # Category-specific keyword priority score
         category_data = self.knowledge_base[category]
         keyword_priority_score = 0
         for word in normalized.split():
             if word in category_data["keywords"]:
                 keyword_priority_score += category_data["keywords"][word]
         
-        if critical_score > 0:
-            priority = Priority.CRITICAL
-            priority_score = 4.5
+        # Define priority based on combined scores and thresholds
+        current_priority = Priority.LOW
+        current_priority_score = 1.5
+        
+        if absolute_critical_score > 0 or keyword_priority_score >= 5.0: # High threshold for direct critical
+            current_priority = Priority.CRITICAL
+            current_priority_score = 4.5
             factors.append(f"Critical indicators detected")
-        elif keyword_priority_score >= 4.0:
-            priority = Priority.HIGH
-            priority_score = 3.5
+        elif keyword_priority_score >= 3.0: # High priority for significant keywords
+            current_priority = Priority.HIGH
+            current_priority_score = 3.5
             factors.append(f"High severity indicators")
-        elif keyword_priority_score >= 2.0:
-            priority = Priority.MEDIUM
-            priority_score = 2.5
+        elif keyword_priority_score >= 1.0: # Medium priority for some keywords
+            current_priority = Priority.MEDIUM
+            current_priority_score = 2.5
             factors.append(f"Moderate severity indicators")
-        else:
-            priority = Priority.LOW
-            priority_score = 1.5
+        else: # Default or very low keyword match
+            current_priority = Priority.LOW
+            current_priority_score = 1.5
             factors.append(f"Low severity or suggestion")
         
-        return priority, priority_score, factors
+        return current_priority, current_priority_score, factors
     
     def calculate_confidence(self, category_scores: Dict[str, float], best_category: str) -> float:
-        """Calculate classification confidence"""
+        """Calculate classification confidence based on score separation and magnitude."""
         sorted_scores = sorted(category_scores.values(), reverse=True)
-        if len(sorted_scores) > 1 and sorted_scores[0] > 0:
-            separation = (sorted_scores[0] - sorted_scores[1]) / sorted_scores[0]
-            return min(max(separation * category_scores[best_category], 0.1), 1.0)
-        return 0.3
+        
+        # If only one category or all scores are zero/very low
+        if len(sorted_scores) < 2 or sorted_scores[0] < 0.1:
+            return 0.3 # Low confidence if no clear winner or all scores are low
+        
+        # Confidence based on separation between top two scores
+        separation = sorted_scores[0] - sorted_scores[1]
+        
+        # Magnitude of the best score
+        magnitude = sorted_scores[0]
+        
+        # Combine separation and magnitude for a more nuanced confidence
+        # Max confidence is 1.0. Higher separation and magnitude lead to higher confidence.
+        confidence = (separation * 0.7) + (magnitude * 0.3) # Weighted average
+        
+        return min(max(confidence, 0.1), 1.0) # Ensure confidence is between 0.1 and 1.0
     
     def classify(self, text: str) -> ClassificationResult:
         if not text or not text.strip():
+            logger.warning("Classification error: Empty text provided.")
             return ClassificationResult(
                 category="Other", priority=Priority.LOW.value, confidence=0.1,
                 priority_score=1.0, matched_keywords=[], priority_factors=["Empty input"],
@@ -338,41 +379,46 @@ class FeedbackClassifier:
             
             # Find best category
             best_category = max(category_scores.keys(), key=lambda k: category_scores[k])
-            best_matches = all_matches[best_category]
             
-            # Handle low scores with keyword inference
-            if category_scores[best_category] < 0.15:
+            # Re-evaluate best category if top score is very low, using simpler keyword inference
+            if category_scores[best_category] < 0.1: # Lower threshold to be more aggressive with inference
                 normalized = self.normalize_text(text)
-                if any(word in normalized for word in ["safe", "danger", "hazard", "injury"]):
-                    best_category = "Safety Concern"
-                elif any(word in normalized for word in ["machine", "equipment", "broken", "repair"]):
-                    best_category = "Machine/Equipment Issue"
-                elif any(word in normalized for word in ["improve", "suggest", "idea", "better"]):
-                    best_category = "Process Improvement Idea"
-                else:
-                    best_category = "Other"
+                inferred_category = "Other" # Default if no strong keywords
+                if any(word in normalized for word in ["safe", "danger", "hazard", "injury", "guard"]):
+                    inferred_category = "Safety Concern"
+                elif any(word in normalized for word in ["machine", "equipment", "broken", "repair", "motor", "conveyor"]):
+                    inferred_category = "Machine/Equipment Issue"
+                elif any(word in normalized for word in ["improve", "suggest", "idea", "better", "process", "workflow"]):
+                    inferred_category = "Process Improvement Idea"
+                best_category = inferred_category
+                
+            best_matches = all_matches.get(best_category, []) # Get matches for the final best category
             
-            # Determine initial priority
-            priority, priority_score, priority_factors = self.determine_priority(
-                text, best_category, category_scores[best_category]
+            # Determine initial priority (before duplicate analysis)
+            initial_priority_enum, initial_priority_score, priority_factors = self.determine_priority(
+                text, best_category, category_scores.get(best_category, 0.0)
             )
             
             # Check for duplicates and potential escalation
             duplicate_analysis = self.duplicate_detector.analyze_submission(
-                text, best_category, priority.value
+                text, best_category, initial_priority_enum.value # Pass the initial priority value
             )
             
-            # Apply escalation if needed
+            # Apply escalation if needed (final priority comes from duplicate_analysis)
             final_priority = duplicate_analysis.escalated_priority
-            if duplicate_analysis.escalation_applied:
-                priority_score = 4.8  # Critical priority score
-                priority_factors.append(f"ESCALATED TO CRITICAL: {duplicate_analysis.similar_count} similar submissions detected")
-                priority_factors.append(f"Original: {duplicate_analysis.original_priority} → Final: {final_priority}")
             
-            # Calculate confidence
+            # Adjust priority score and factors if escalation was applied
+            if duplicate_analysis.escalation_applied and Priority(final_priority) == Priority.CRITICAL:
+                priority_score = 4.8  # Elevated critical priority score for escalations
+                priority_factors.append(f"ESCALATED TO CRITICAL: {duplicate_analysis.similar_count} similar submissions detected within retention.")
+                priority_factors.append(f"Original Priority: {duplicate_analysis.original_priority} → Final Priority: {final_priority}")
+            else:
+                priority_score = initial_priority_score # Use initial score if no escalation
+                
+            # Calculate final confidence
             confidence = self.calculate_confidence(category_scores, best_category)
             
-            return ClassificationResult(
+            result = ClassificationResult(
                 category=best_category,
                 priority=final_priority,
                 confidence=round(confidence, 3),
@@ -381,9 +427,11 @@ class FeedbackClassifier:
                 priority_factors=priority_factors,
                 duplicate_analysis=duplicate_analysis
             )
+            logger.info(f"Classification Result: Category={result.category}, Priority={result.priority}, Confidence={result.confidence}, Duplicate_Applied={result.duplicate_analysis.escalation_applied if result.duplicate_analysis else 'N/A'}")
+            return result
             
         except Exception as e:
-            logger.error(f"Classification error: {e}")
+            logger.error(f"Classification error: {e}", exc_info=True) # Log full traceback
             return ClassificationResult(
                 category="Other", priority=Priority.LOW.value, confidence=0.1,
                 priority_score=1.0, matched_keywords=[], priority_factors=["Error occurred"],
@@ -396,16 +444,19 @@ classifier = FeedbackClassifier()
 def handle_classify():
     data = request.get_json()
     if not data or 'text' not in data:
+        logger.warning("Missing 'text' field in request.")
         return jsonify({"error": "Missing 'text' field"}), 400
     
     text = data.get('text', '')
     if len(text) > MAX_TEXT_LENGTH:
+        logger.warning(f"Text exceeds MAX_TEXT_LENGTH ({MAX_TEXT_LENGTH} chars).")
         return jsonify({"error": f"Text exceeds {MAX_TEXT_LENGTH} characters"}), 400
     
     result = classifier.classify(text)
     if result.error:
         logger.warning(f"Classification warning: {result.error}")
     
+    # Scale confidence to 1-10 range as requested
     confidence_10_scale = max(1, min(10, round(result.confidence * 10)))
     
     response = {
@@ -414,13 +465,13 @@ def handle_classify():
         "priority": result.priority,
         "autopriority": result.priority,
         "confidence": confidence_10_scale,
-        "confidence_score": confidence_10_scale,
+        "confidence_score": confidence_10_scale, # Providing both for flexibility
         "priority_score": result.priority_score,
         "matched_keywords": result.matched_keywords,
         "priority_factors": result.priority_factors
     }
     
-    # Add duplicate analysis
+    # Add duplicate analysis if present
     if result.duplicate_analysis:
         response["duplicate_analysis"] = {
             "is_duplicate": result.duplicate_analysis.is_duplicate,
@@ -429,22 +480,28 @@ def handle_classify():
             "original_priority": result.duplicate_analysis.original_priority,
             "escalated_priority": result.duplicate_analysis.escalated_priority
         }
-    
+    logger.info(f"API Response: {response}") # Log the full response being sent
     return jsonify(response)
 
 @app.route("/duplicate_stats", methods=['GET'])
 def get_duplicate_stats():
     """Get statistics about submissions and duplicates"""
-    classifier.duplicate_detector.clean_old_submissions()
+    classifier.duplicate_detector.clean_old_submissions() # Clean before reporting
     submissions = classifier.duplicate_detector.submissions
     
-    return jsonify({
-        "total_submissions": len(submissions),
-        "escalated_count": len([s for s in submissions if s.priority == "Critical"]),
+    # Count how many of the currently retained submissions are critical due to escalation
+    escalated_critical_count = len([s for s in submissions 
+                                    if s.priority == Priority.CRITICAL.value and "ESCALATED TO CRITICAL" in ' '.join(classifier.classify(s.text).priority_factors)]) # Re-classify to check factors
+    
+    response = {
+        "total_submissions_retained": len(submissions),
+        "escalated_critical_in_memory": escalated_critical_count,
         "retention_hours": classifier.duplicate_detector.retention_hours,
         "similarity_threshold": classifier.duplicate_detector.similarity_threshold,
         "escalation_threshold": classifier.duplicate_detector.escalation_threshold
-    })
+    }
+    logger.info(f"Duplicate Stats: {response}")
+    return jsonify(response)
 
 # Keep the existing home route and error handlers from original code
 @app.route("/")
@@ -461,8 +518,8 @@ def home():
     <h1>🧠 Enhanced Feedback Classification API</h1>
     <div class="card"><h2>🆕 NEW: Duplicate Detection & Auto-Escalation</h2>
     <div class="feature">✨ Detects similar/duplicate submissions automatically</div>
-    <div class="feature">⬆️ Escalates LOW/MEDIUM issues to CRITICAL when reported 3+ times</div>
-    <div class="feature">🔍 Uses advanced text similarity matching (75% threshold)</div>
+    <div class="feature">⬆️ Escalates LOW/MEDIUM/HIGH issues to CRITICAL when reported 2+ times</div>
+    <div class="feature">🔍 Uses advanced text similarity matching (60% threshold)</div>
     <div class="feature">⏰ Tracks submissions for 1 week (configurable)</div>
     </div>
     
@@ -477,7 +534,7 @@ def home():
     
     <div class="card"><h2>🎯 How Duplicate Detection Works</h2>
     <p><strong>Step 1:</strong> System analyzes text similarity using advanced algorithms</p>
-    <p><strong>Step 2:</strong> If 3+ similar submissions found with LOW/MEDIUM priority</p>
+    <p><strong>Step 2:</strong> If 2+ similar submissions found with LOW/MEDIUM/HIGH priority</p>
     <p><strong>Step 3:</strong> Automatically escalates to CRITICAL priority</p>
     <p><strong>Step 4:</strong> Returns detailed analysis of duplicate detection</p>
     </div>
@@ -504,8 +561,9 @@ def not_found(error):
 
 @app.errorhandler(500)
 def internal_error(error):
-    logger.error(f"Internal error: {error}")
+    logger.error(f"Internal error: {error}", exc_info=True)
     return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)
+
