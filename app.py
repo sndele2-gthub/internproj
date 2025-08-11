@@ -33,7 +33,7 @@ class SubmissionRecord:
 class ClassificationResult:
     category: str
     priority: str
-    confidence: float
+    confidence: int # Changed to int for 0-10 scale
     matched_keywords: Dict[str, List[str]] = field(default_factory=dict)
     priority_factors: List[str] = field(default_factory=list)
     is_duplicate: bool = False
@@ -69,44 +69,61 @@ class ClassifierLogic:
             for i, token in enumerate(tokens):
                 score = 0
                 level = None
+                
                 # Safely get keyword sets, defaulting to an empty set if the key doesn't exist
                 critical_keywords = data.get("critical", set())
                 high_keywords = data.get("high", set())
                 medium_keywords = data.get("medium", set())
+                negation_keywords = data.get("negation", set())
 
                 if token in critical_keywords: score, level = 3.0, "critical"
                 elif token in high_keywords: score, level = 2.0, "high"
                 elif token in medium_keywords: score, level = 1.0, "medium"
                 
                 # Apply negation check: if a negation word is near a keyword, reduce its score
-                if score > 0 and not any(t in data.get("negation", set()) for t in tokens[max(0, i-3):i+4]):
+                if score > 0 and not any(t in negation_keywords for t in tokens[max(0, i-3):i+4]):
                     cat_scores[cat] += score
                     matched_keys[cat][level].append(token)
         return dict(cat_scores), dict(matched_keys)
 
     def _determine_priority(self, scores: Dict, text: str) -> Tuple[Priority, List[str]]:
-        """Determines the overall priority based on calculated scores and explicit mentions."""
+        """
+        Determines the overall priority based on calculated scores and explicit mentions.
+        Prioritizes explicit impact levels, then critical keywords, then other matched keywords.
+        """
         factors, text_lower = [], text.lower()
         
-        # Check for explicit impact level mention in the text (e.g., "impact level: critical")
+        # 1. Check for explicit impact level mention
         explicit_level_match = re.search(r"impact level:\s*(minimal|moderate|significant|critical)", text_lower)
         explicit_level = explicit_level_match.group(1).capitalize() if explicit_level_match else None
 
         if explicit_level and explicit_level in ["Minimal", "Moderate", "Significant", "Critical"]:
             factors.append(f"Explicit Impact Level: {explicit_level}")
+            if explicit_level == "Critical": return Priority.CRITICAL, factors
+            if explicit_level == "Significant": return Priority.HIGH, factors
+            if explicit_level == "Moderate": return Priority.MEDIUM, factors
+            if explicit_level == "Minimal": return Priority.LOW, factors
 
-        # Combine critical scores from relevant categories (e.g., Safety and Equipment)
-        critical_score = scores.get("Safety Concern", 0) + scores.get("Machine/Equipment Issue", 0)
+        # 2. Evaluate critical and high scores from Safety/Equipment concerns
+        critical_concern_score = scores.get("Safety Concern", 0) + scores.get("Machine/Equipment Issue", 0)
         
-        # Determine final priority based on a hierarchy of conditions
-        if explicit_level == "Critical" or critical_score >= 3.0:
-            return Priority.CRITICAL, factors + (["Direct Critical indicators detected."] if critical_score >= 3.0 else [])
-        elif explicit_level == "Significant" or critical_score >= 2.0:
-            return Priority.HIGH, factors + (["High severity indicators."] if critical_score >= 2.0 else [])
-        elif explicit_level == "Moderate" or any(s > 0 for cat, s in scores.items() if cat != "Other"):
-            return Priority.MEDIUM, factors + (["Explicit Impact Level: Moderate"] if explicit_level == "Moderate" else [])
-        else:
-            return Priority.LOW, factors + ["Low severity or general suggestion."]
+        if critical_concern_score >= 3.0:
+            factors.append("Direct critical keywords detected in Safety/Equipment concern.")
+            return Priority.CRITICAL, factors
+        elif critical_concern_score >= 2.0:
+            factors.append("High severity keywords detected in Safety/Equipment concern.")
+            return Priority.HIGH, factors
+
+        # 3. If no critical/high direct indicators or explicit levels, check for any positive category score
+        # This covers cases like "Process Improvement Idea" or general "Other" with medium keywords
+        if any(s > 0 for cat, s in scores.items() if cat != "Other"):
+            factors.append("General issue indicators detected.")
+            return Priority.MEDIUM, factors
+        
+        # 4. Default to Low priority if no other conditions met
+        factors.append("No specific high severity or explicit indicators. Defaulting to Low.")
+        return Priority.LOW, factors
+
 
     def _analyze_duplicates(self, text: str, category: str, priority: str) -> Tuple[bool, bool, int, str, str]:
         """Manages submission history to detect and potentially escalate duplicate issues."""
@@ -140,14 +157,15 @@ class ClassifierLogic:
     def classify_and_process(self, text: str) -> ClassificationResult:
         """Main classification pipeline: tokenization -> scoring -> priority -> duplicate analysis."""
         if not text or len(text) > MAX_TEXT_LENGTH:
-            return ClassificationResult("Other", Priority.LOW.value, 0.1, {}, ["Invalid input: Text is empty or too long."])
+            return ClassificationResult("Other", Priority.LOW.value, 0, {}, ["Invalid input: Text is empty or too long."])
         
         tokens = self._normalize_text(text)
         scores, keywords = self._calculate_scores(tokens)
         
-        # Determine the best category based on highest score
+        # Determine the best category based on highest score.
+        # If no scores are above 0 (i.e., no relevant keywords found for any specific category), default to "Other".
         best_category = max(scores, key=scores.get, default="Other")
-        if scores.get(best_category, 0) == 0: # Default to "Other" if no strong category match
+        if scores.get(best_category, 0) == 0:
             best_category = "Other"
             
         initial_priority, factors = self._determine_priority(scores, text)
@@ -158,29 +176,38 @@ class ClassifierLogic:
             if similar_count > 0:
                 factors.append(f"Reason: {similar_count} similar reports found.")
         
-        # Calculate a simple confidence score based on the best category's score
-        confidence = 0.5 + (scores.get(best_category, 0) / (sum(scores.values()) + 1) * 0.5)
+        # Calculate confidence as an integer between 0 and 10
+        # raw_confidence ranges from 0.5 (no score) to 1.0 (max score)
+        # We want to map [0.5, 1.0] to [0, 10]
+        total_score = sum(scores.values()) + 1 # Add 1 to avoid division by zero
+        raw_confidence = 0.5 + (scores.get(best_category, 0) / total_score * 0.5)
         
+        # Scale raw_confidence (0.5 to 1.0) to a 0 to 10 integer
+        # (raw_confidence - 0.5) shifts range to [0, 0.5]
+        # * 20 scales range to [0, 10]
+        confidence_score_0_10 = int(round((raw_confidence - 0.5) * 20))
+        
+        # Ensure the score is clamped between 0 and 10 in case of floating point inaccuracies near boundaries
+        confidence_score_0_10 = max(0, min(10, confidence_score_0_10))
+
         return ClassificationResult(
-            best_category, final_prio, round(confidence, 3), 
-            keywords.get(best_category, {}), factors, 
+            best_category, final_prio, confidence_score_0_10,
+            keywords.get(best_category, {}), factors,
             is_dup, escalated, original_prio, similar_count
         )
 
 classifier_logic = ClassifierLogic()
 
 # --- Flask API Endpoints ---
-# The root route provides a simple message indicating the API is running.
 @app.route("/", methods=["GET"])
 def home():
+    """Returns a simple message indicating the API is running."""
     return jsonify({"message": "Feedback Classification API is running. Use /classify for classification and /stats for statistics."})
 
 @app.route("/classify", methods=["POST"])
 def classify_route():
     """Endpoint for classifying feedback text. Expects a JSON payload with a 'text' field."""
     try:
-        # Use silent=True to prevent Flask from automatically raising an error
-        # if the Content-Type is application/json but the body is malformed.
         data = request.get_json(silent=True)
 
         if data is None:
@@ -190,7 +217,6 @@ def classify_route():
         
         text = data.get("text")
 
-        # Explicitly check if 'text' is a string and not None
         if not isinstance(text, str):
             logging.warning(f"Invalid 'text' field type: {type(text)}. Expected string. Received data: {data}")
             return jsonify({"error": "Invalid or missing 'text' field in JSON payload. Expected a string."}), 400
@@ -199,7 +225,7 @@ def classify_route():
             logging.warning("Received empty 'text' field after stripping whitespace.")
             return jsonify({"error": "Text field cannot be empty or just whitespace."}), 400
 
-        logging.info(f"Received text for classification: '{text[:100]}...'") # Log the received text
+        logging.info(f"Received text for classification: '{text[:100]}...'")
         result = classifier_logic.classify_and_process(text)
         
         # Format matched_keywords for consistent JSON output (even if empty)
@@ -209,11 +235,10 @@ def classify_route():
             "medium": result.matched_keywords.get("medium", [])
         }
 
-        # Construct the response payload
         response_data = {
             "category": result.category,
             "priority": result.priority,
-            "confidence": result.confidence,
+            "confidence": result.confidence, # Now an integer between 0-10
             "matched_keywords": formatted_keywords,
             "priority_factors": result.priority_factors,
             "is_duplicate": result.is_duplicate,
@@ -224,7 +249,6 @@ def classify_route():
         
         return jsonify(response_data)
     except Exception as e:
-        # Catch any unexpected errors during processing and log them with traceback
         logging.error(f"Server-side error during classification: {e}", exc_info=True)
         return jsonify({"error": "An internal server error occurred during classification. Please check server logs."}), 500
 
@@ -232,7 +256,6 @@ def classify_route():
 def stats_route():
     """Endpoint for retrieving duplicate detection statistics."""
     try:
-        # Ensure submissions list is cleaned before calculating stats
         classifier_logic.submissions = [s for s in classifier_logic.submissions if s.timestamp > datetime.now() - timedelta(hours=classifier_logic.retention_hours)]
         total_submissions = len(classifier_logic.submissions)
         escalated_count = sum(1 for s in classifier_logic.submissions if s.is_escalated)
