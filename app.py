@@ -69,12 +69,17 @@ class ClassifierLogic:
             for i, token in enumerate(tokens):
                 score = 0
                 level = None
-                if token in data["critical"]: score, level = 3.0, "critical"
-                elif token in data["high"]: score, level = 2.0, "high"
-                elif token in data["medium"]: score, level = 1.0, "medium"
+                # Safely get keyword sets, defaulting to an empty set if the key doesn't exist
+                critical_keywords = data.get("critical", set())
+                high_keywords = data.get("high", set())
+                medium_keywords = data.get("medium", set())
+
+                if token in critical_keywords: score, level = 3.0, "critical"
+                elif token in high_keywords: score, level = 2.0, "high"
+                elif token in medium_keywords: score, level = 1.0, "medium"
                 
                 # Apply negation check: if a negation word is near a keyword, reduce its score
-                if score > 0 and not any(t in data["negation"] for t in tokens[max(0, i-3):i+4]):
+                if score > 0 and not any(t in data.get("negation", set()) for t in tokens[max(0, i-3):i+4]):
                     cat_scores[cat] += score
                     matched_keys[cat][level].append(token)
         return dict(cat_scores), dict(matched_keys)
