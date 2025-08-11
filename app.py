@@ -6,7 +6,7 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass, field
 from enum import Enum
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, render_template_string
 from datetime import datetime, timedelta
 import hashlib
 
@@ -184,40 +184,31 @@ def home():
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>AI Feedback Classifier</title>
         <style>
-            :root {
-                --bg-color: #1a1a2e;
-                --card-bg-color: #2c2c54;
-                --text-color: #e0e0e0;
-                --primary-color: #007bff;
-                --critical-color: #e74c3c;
-                --high-color: #f39c12;
-                --medium-color: #3498db;
-                --low-color: #2ecc71;
-            }
             body {
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                background-color: var(--bg-color);
-                color: var(--text-color);
+                font-family: 'Segoe UI', Arial, sans-serif;
+                background-color: #f4f7f6;
+                color: #333;
                 margin: 0;
-                padding: 20px;
+                padding: 40px;
                 display: flex;
                 flex-direction: column;
                 align-items: center;
                 min-height: 100vh;
             }
             .container {
-                background: var(--card-bg-color);
+                background: #ffffff;
                 padding: 30px;
                 border-radius: 12px;
-                box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+                box-shadow: 0 4px 15px rgba(0,0,0,0.1);
                 width: 100%;
-                max-width: 600px;
+                max-width: 650px;
                 margin-top: 20px;
             }
             h1 {
-                color: #ffffff;
+                color: #2c3e50;
                 text-align: center;
-                margin-bottom: 20px;
+                margin-bottom: 25px;
+                font-weight: 600;
             }
             form {
                 display: flex;
@@ -226,66 +217,63 @@ def home():
             textarea {
                 width: 100%;
                 height: 150px;
-                padding: 12px;
-                border: 1px solid #4a4a75;
+                padding: 15px;
+                border: 1px solid #e0e0e0;
                 border-radius: 8px;
                 font-size: 16px;
                 margin-bottom: 20px;
                 resize: vertical;
-                background-color: #3b3b6b;
-                color: var(--text-color);
+                box-sizing: border-box;
             }
             button {
                 padding: 12px 20px;
-                background-color: var(--primary-color);
+                background-color: #3498db;
                 color: white;
                 border: none;
                 border-radius: 8px;
                 font-size: 18px;
                 cursor: pointer;
-                transition: background-color 0.3s;
+                transition: background-color 0.3s, transform 0.2s;
+                font-weight: 600;
             }
             button:hover {
-                background-color: #0056b3;
+                background-color: #2980b9;
+                transform: translateY(-2px);
             }
             .results {
                 margin-top: 30px;
-                border-top: 1px solid #4a4a75;
-                padding-top: 20px;
+                border-top: 1px solid #e0e0e0;
+                padding-top: 25px;
             }
             .results h2 {
-                color: var(--primary-color);
-                margin-bottom: 15px;
+                color: #2c3e50;
+                margin-bottom: 20px;
+                font-weight: 600;
             }
             .result-item {
-                margin-bottom: 12px;
+                margin-bottom: 15px;
                 display: flex;
-                align-items: center;
-                gap: 10px;
+                flex-direction: column;
             }
             .result-item strong {
-                font-size: 1em;
-                color: #b0b0d0;
-                flex-shrink: 0;
+                font-size: 1.1em;
+                color: #555;
+                margin-bottom: 5px;
             }
             .result-item span, .result-item ul {
                 font-size: 1em;
+                color: #333;
                 margin: 0;
             }
             .result-item ul {
-                list-style-type: none;
-                padding-left: 0;
+                list-style-type: disc;
+                padding-left: 25px;
+                margin-top: 5px;
             }
-            .result-item ul li {
-                background: #3b3b6b;
-                padding: 5px 10px;
-                border-radius: 6px;
-                margin-bottom: 5px;
-            }
-            .priority-critical { color: var(--critical-color); font-weight: bold; }
-            .priority-high { color: var(--high-color); font-weight: bold; }
-            .priority-medium { color: var(--medium-color); font-weight: bold; }
-            .priority-low { color: var(--low-color); }
+            .priority-critical { color: #e74c3c; font-weight: bold; }
+            .priority-high { color: #f39c12; font-weight: bold; }
+            .priority-medium { color: #3498db; font-weight: bold; }
+            .priority-low { color: #2ecc71; font-weight: bold; }
         </style>
     </head>
     <body>
