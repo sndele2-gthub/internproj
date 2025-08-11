@@ -2,6 +2,7 @@ import os
 import re
 import difflib
 import logging
+import json # Import the json library explicitly for clarity, though flask.jsonify handles it
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass, field
@@ -40,6 +41,8 @@ class ClassificationResult:
     priority_factors: List[str] = field(default_factory=list)
     is_duplicate: bool = False
     escalation_applied: bool = False
+    original_priority: str = "N/A" # Used for reporting original priority in duplicates
+    similar_count: int = 0 # Added to pass similar count for duplicate analysis message
 
 # --- Knowledge Base and Constants ---
 IMPACT_LEVELS = {"Minimal": Priority.LOW, "Moderate": Priority.MEDIUM, "Significant": Priority.HIGH, "Critical": Priority.CRITICAL}
@@ -78,9 +81,11 @@ class ClassifierLogic:
         self.escalation_threshold = 2
 
     def _normalize_text(self, text: str) -> List[str]:
+        """Tokenizes and normalizes text into a list of words."""
         return re.findall(r'\b\w+\b', text.lower())
 
     def _calculate_scores(self, tokens: List[str]) -> Tuple[Dict, Dict]:
+        """Calculates category scores based on keyword matches and context."""
         category_scores, matched_keywords = defaultdict(float), defaultdict(lambda: defaultdict(list))
         for cat, data in KNOWLEDGE_BASE.items():
             for i, token in enumerate(tokens):
@@ -91,6 +96,7 @@ class ClassifierLogic:
                 elif token in data["medium"]: score, level = 1.0, "medium"
 
                 if score > 0:
+                    # Check for negation words within a small window
                     is_negated = any(t in data["negation"] for t in tokens[max(0, i-3):i+4])
                     if not is_negated:
                         category_scores[cat] += score
@@ -98,15 +104,17 @@ class ClassifierLogic:
         return dict(category_scores), dict(matched_keywords)
 
     def _determine_priority(self, scores: Dict, text: str) -> Tuple[Priority, List[str]]:
+        """Determines the priority based on content analysis and explicit impact levels."""
         factors = []
         text_lower = text.lower()
         
         explicit_level = None
-        match = re.search(r"impact level: (\w+)", text_lower)
+        match = re.search(r"impact level:\s*(minimal|moderate|significant|critical)", text_lower)
         if match and match.group(1).capitalize() in IMPACT_LEVELS:
             explicit_level = match.group(1).capitalize()
             factors.append(f"Explicit Impact Level: {explicit_level}")
 
+        # Combine critical scores from safety and equipment categories
         critical_score = scores.get("Safety Concern", 0) + scores.get("Machine/Equipment Issue", 0)
         
         if explicit_level == "Critical" or critical_score >= 3.0:
@@ -115,62 +123,100 @@ class ClassifierLogic:
         elif explicit_level == "Significant" or critical_score >= 2.0:
             if critical_score >= 2.0: factors.append("High severity indicators.")
             return Priority.HIGH, factors
-        elif explicit_level == "Moderate" or any(s > 0 for cat, s in scores.items() if cat != "Other"):
+        elif explicit_level == "Moderate" or any(s > 0 for cat, s in scores.items() if cat not in ["Other"]): # Any non-trivial score in core categories implies at least medium
             if explicit_level == "Moderate": factors.append("Explicit Impact Level: Moderate")
             return Priority.MEDIUM, factors
         else:
             factors.append("Low severity or general suggestion.")
             return Priority.LOW, factors
 
-    def _analyze_duplicates(self, text: str, category: str, priority: str) -> Tuple[bool, bool, int, str]:
+    def _analyze_duplicates(self, text: str, category: str, priority: str) -> Tuple[bool, bool, int, str, str]:
+        """Analyzes for duplicate submissions and applies escalation logic."""
+        # Clean old submissions first
         self.submissions = [s for s in self.submissions if s.timestamp > datetime.now() - timedelta(hours=self.retention_hours)]
         
         new_hash = hashlib.md5(text.lower().encode()).hexdigest()
         similar_count = 0
         
         for s in self.submissions:
+            # Check for exact hash match or high text similarity within the same or compatible category
             is_match = (s.submission_hash == new_hash) or \
                        (difflib.SequenceMatcher(None, text.lower(), s.text.lower()).ratio() > self.similarity_threshold)
-            if is_match and s.category == category:
+            if is_match and (s.category == category): # Simplified category check for strictness
                 similar_count += 1
 
         is_duplicate = similar_count > 0
         escalation = False
         final_priority = priority
+        original_priority = priority # Store the priority *before* detector logic
         
-        if priority in (Priority.LOW.value, Priority.MEDIUM.value) and similar_count >= self.escalation_threshold:
+        # Escalation only for LOW/MEDIUM original priorities meeting threshold
+        if original_priority in (Priority.LOW.value, Priority.MEDIUM.value) and similar_count >= self.escalation_threshold:
             escalation = True
             final_priority = Priority.CRITICAL.value
-            
-        self.submissions.append(SubmissionRecord(text=text, category=category, priority=final_priority, timestamp=datetime.now(), submission_hash=new_hash, is_escalated=escalation))
-        return is_duplicate, escalation, similar_count, final_priority
+            logger.info(f"Priority escalated from {original_priority} to {final_priority} for '{text[:50]}...' due to {similar_count} similar entries.")
+        elif original_priority == Priority.CRITICAL.value and similar_count > 0:
+            # If already critical and is a duplicate, mark escalation_applied to indicate recurrence
+            escalation = True
+            logger.info(f"Critical issue '{text[:50]}...' is a duplicate, indicating recurrence.")
+
+        # Store the current submission (with its final determined priority)
+        self.submissions.append(SubmissionRecord(
+            text=text,
+            category=category,
+            priority=final_priority,
+            timestamp=datetime.now(),
+            submission_hash=new_hash,
+            is_escalated=escalation # Store if *this* submission was the one that triggered/was part of an escalation
+        ))
+        
+        return is_duplicate, escalation, similar_count, final_priority, original_priority
 
     def classify_and_process(self, text: str) -> ClassificationResult:
+        """Main entry point for classification, priority, and duplicate analysis."""
         if not text or len(text) > MAX_TEXT_LENGTH:
             return ClassificationResult("Other", Priority.LOW.value, 0.1, {}, ["Invalid input"])
         
         tokens = self._normalize_text(text)
         scores, keywords = self._calculate_scores(tokens)
         
+        # Determine the best category
         best_category = max(scores, key=scores.get, default="Other")
-        if scores.get(best_category, 0) == 0:
+        if scores.get(best_category, 0) == 0: # Fallback to "Other" if no strong matches
             best_category = "Other"
             
         initial_priority, factors = self._determine_priority(scores, text)
-        is_duplicate, escalation, similar_count, final_priority = self._analyze_duplicates(text, best_category, initial_priority.value)
         
-        if escalation:
-            factors.append(f"ESCALATED TO CRITICAL: {similar_count} similar reports found.")
+        # Analyze duplicates and get the final priority
+        is_duplicate, escalation_applied, similar_count, final_priority, original_priority = self._analyze_duplicates(text, best_category, initial_priority.value)
         
+        if escalation_applied:
+            factors.append(f"System-determined priority: {original_priority} -> {final_priority} (Escalated)")
+            if similar_count > 0:
+                 factors.append(f"Reason: {similar_count} similar reports found within retention period.")
+        
+        # Calculate a simple confidence score
         confidence = 0.5 + (scores.get(best_category, 0) / (sum(scores.values()) + 1) * 0.5)
         
-        return ClassificationResult(best_category, final_priority, round(confidence, 3), keywords.get(best_category, {}), factors, is_duplicate, escalation)
+        return ClassificationResult(
+            category=best_category,
+            priority=final_priority,
+            confidence=round(confidence, 3),
+            matched_keywords=keywords.get(best_category, {}),
+            priority_factors=factors,
+            is_duplicate=is_duplicate,
+            escalation_applied=escalation_applied,
+            original_priority=original_priority, # Pass the original priority before escalation
+            similar_count=similar_count # Pass the count for detailed messaging
+        )
 
 classifier_logic = ClassifierLogic()
 
 # --- Flask Routes and UI ---
 @app.route("/", methods=["GET"])
 def home():
+    """Serves the main HTML page for the feedback classifier."""
+    # The HTML content for your UI is embedded here
     html_content = """
 <!DOCTYPE html>
 <html lang="en">
@@ -741,7 +787,8 @@ def home():
         <div id="statsContainer" class="stats-card" style="display: none;">
             <h3><i class="fas fa-chart-line"></i> System Statistics</h3>
             <div class="stats-grid" id="statsGrid">
-                </div>
+                <!-- Stats will be populated here -->
+            </div>
         </div>
     </div>
 
@@ -785,6 +832,7 @@ def home():
             charCount.textContent = '0';
             charCount.style.color = 'var(--text-secondary)';
             resultsContainer.style.display = 'none';
+            statsContainer.style.display = 'none'; // Hide stats when clearing
             errorContainer.innerHTML = '';
         });
 
@@ -795,13 +843,17 @@ def home():
 
         async function classifyFeedback() {
             const text = textarea.value.trim();
-            if (!text) return;
+            if (!text) {
+                showError("Please enter some feedback to classify.");
+                return;
+            }
 
             // Show loading state
             const originalContent = classifyBtn.innerHTML;
             classifyBtn.innerHTML = '<div class="loading"></div> Analyzing...';
             classifyBtn.disabled = true;
             errorContainer.innerHTML = '';
+            statsContainer.style.display = 'none'; // Hide stats if showing
 
             try {
                 const response = await fetch(`${API_BASE_URL}/classify`, {
@@ -812,15 +864,18 @@ def home():
                     body: JSON.stringify({ text: text })
                 });
 
+                // Check for HTTP errors (e.g., 400, 500)
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    const errorJson = await response.json(); // Try to parse error as JSON
+                    const errorMessage = errorJson.error || `HTTP error! Status: ${response.status}`;
+                    throw new Error(errorMessage);
                 }
 
                 const result = await response.json();
                 displayResults(result);
                 
             } catch (error) {
-                showError(`Failed to classify feedback: ${error.message}. Make sure the Flask server is running on the correct port.`);
+                showError(`Failed to classify feedback: ${error.message}. Please ensure the Flask server is running.`);
             } finally {
                 classifyBtn.innerHTML = originalContent;
                 classifyBtn.disabled = false;
@@ -854,10 +909,14 @@ def home():
             
             if (result.escalation_applied) {
                 escalationAlert.style.display = 'flex';
-                escalationMessage.innerHTML = `
-                    This issue has been escalated to <strong>CRITICAL</strong> priority due to 
-                    a duplicate submission.
-                `;
+                let msg = `This issue has been escalated to <strong>CRITICAL</strong> priority.`;
+                if (result.similar_count > 0) {
+                    msg += ` This is a duplicate of ${result.similar_count} similar reports.`;
+                }
+                if (result.original_priority && result.original_priority !== result.priority) {
+                    msg += `<br><small>Original system priority was: ${result.original_priority}</small>`;
+                }
+                escalationMessage.innerHTML = msg;
             } else {
                 escalationAlert.style.display = 'none';
             }
@@ -867,7 +926,7 @@ def home():
             keywordTags.innerHTML = '';
             
             if (result.matched_keywords) {
-                ['critical', 'high', 'medium'].forEach(level => {
+                for (const level in result.matched_keywords) {
                     if (result.matched_keywords[level] && result.matched_keywords[level].length > 0) {
                         result.matched_keywords[level].forEach(keyword => {
                             const tag = document.createElement('span');
@@ -876,19 +935,23 @@ def home():
                             keywordTags.appendChild(tag);
                         });
                     }
-                });
+                }
             }
 
             // Display priority factors
             const factorsList = document.getElementById('factorsList');
             factorsList.innerHTML = '';
             
-            if (result.priority_factors) {
+            if (result.priority_factors && result.priority_factors.length > 0) {
                 result.priority_factors.forEach(factor => {
                     const li = document.createElement('li');
                     li.innerHTML = `<i class="fas fa-check-circle" style="color: var(--success-color);"></i> ${factor}`;
                     factorsList.appendChild(li);
                 });
+            } else {
+                 const li = document.createElement('li');
+                 li.textContent = "No specific factors identified.";
+                 factorsList.appendChild(li);
             }
 
             // Show results
@@ -897,17 +960,22 @@ def home():
         }
 
         async function loadStats() {
+            resultsContainer.style.display = 'none'; // Hide results if showing
+            errorContainer.innerHTML = ''; // Clear any previous errors
+
             try {
                 const response = await fetch(`${API_BASE_URL}/duplicate_stats`);
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    const errorJson = await response.json();
+                    const errorMessage = errorJson.error || `HTTP error! Status: ${response.status}`;
+                    throw new Error(errorMessage);
                 }
 
                 const stats = await response.json();
                 displayStats(stats);
                 
             } catch (error) {
-                showError(`Failed to load stats: ${error.message}`);
+                showError(`Failed to load stats: ${error.message}. Please ensure the Flask server is running.`);
             }
         }
 
@@ -961,34 +1029,46 @@ def home():
 
 @app.route("/classify", methods=["POST"])
 def classify_route():
+    """API endpoint to classify feedback text."""
     try:
         data = request.get_json()
         text = data.get("text", "")
         if not text:
+            logger.warning("Missing 'text' in request body for /classify endpoint.")
             return jsonify({"error": "Missing 'text' in request body"}), 400
         
         result = classifier_logic.classify_and_process(text)
         
-        # Prepare the response with data the front end expects
+        # Ensure matched_keywords is always structured as expected by the JS
+        formatted_keywords = {
+            "critical": result.matched_keywords.get("critical", []),
+            "high": result.matched_keywords.get("high", []),
+            "medium": result.matched_keywords.get("medium", [])
+        }
+
+        # Prepare the response payload for the front end
         response_data = {
             "category": result.category,
             "priority": result.priority,
             "confidence": result.confidence,
-            "matched_keywords": result.matched_keywords,
+            "matched_keywords": formatted_keywords,
             "priority_factors": result.priority_factors,
             "is_duplicate": result.is_duplicate,
             "escalation_applied": result.escalation_applied,
+            "original_priority": result.original_priority, # Pass original priority
+            "similar_count": result.similar_count # Pass similar count
         }
         
         return jsonify(response_data)
     except Exception as e:
-        logger.error(f"Error during classification: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Server-side error during classification: {e}", exc_info=True)
+        return jsonify({"error": "An internal server error occurred during classification."}), 500
 
 @app.route("/duplicate_stats", methods=["GET"])
 def stats_route():
+    """API endpoint to get duplicate detection statistics."""
     try:
-        # Calculate stats from the in-memory list
+        classifier_logic.submissions = [s for s in classifier_logic.submissions if s.timestamp > datetime.now() - timedelta(hours=classifier_logic.retention_hours)]
         total_submissions = len(classifier_logic.submissions)
         escalated_count = sum(1 for s in classifier_logic.submissions if s.is_escalated)
         
@@ -1001,8 +1081,9 @@ def stats_route():
         }
         return jsonify(stats)
     except Exception as e:
-        logger.error(f"Error generating stats: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Server-side error generating stats: {e}", exc_info=True)
+        return jsonify({"error": "An internal server error occurred while fetching statistics."}), 500
 
 if __name__ == "__main__":
+    # Note: For production, debug=False and use a production-ready WSGI server.
     app.run(debug=True, host="0.0.0.0", port=5000)
