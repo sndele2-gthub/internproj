@@ -5,7 +5,7 @@ from collections import defaultdict
 from typing import Dict, List, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 import hashlib
 
@@ -59,9 +59,11 @@ class ClassifierLogic:
         self.escalation_threshold = 2
 
     def _normalize_text(self, text: str) -> List[str]:
+        """Normalizes text by converting to lowercase and finding all word characters."""
         return re.findall(r'\b\w+\b', text.lower())
 
     def _calculate_scores(self, tokens: List[str]) -> Tuple[Dict, Dict]:
+        """Calculates keyword scores for each category based on normalized tokens."""
         cat_scores, matched_keys = defaultdict(float), defaultdict(lambda: defaultdict(list))
         for cat, data in KNOWLEDGE_BASE.items():
             for i, token in enumerate(tokens):
@@ -70,21 +72,28 @@ class ClassifierLogic:
                 if token in data["critical"]: score, level = 3.0, "critical"
                 elif token in data["high"]: score, level = 2.0, "high"
                 elif token in data["medium"]: score, level = 1.0, "medium"
+                
+                # Apply negation check: if a negation word is near a keyword, reduce its score
                 if score > 0 and not any(t in data["negation"] for t in tokens[max(0, i-3):i+4]):
                     cat_scores[cat] += score
                     matched_keys[cat][level].append(token)
         return dict(cat_scores), dict(matched_keys)
 
     def _determine_priority(self, scores: Dict, text: str) -> Tuple[Priority, List[str]]:
+        """Determines the overall priority based on calculated scores and explicit mentions."""
         factors, text_lower = [], text.lower()
+        
+        # Check for explicit impact level mention in the text (e.g., "impact level: critical")
         explicit_level_match = re.search(r"impact level:\s*(minimal|moderate|significant|critical)", text_lower)
         explicit_level = explicit_level_match.group(1).capitalize() if explicit_level_match else None
 
         if explicit_level and explicit_level in ["Minimal", "Moderate", "Significant", "Critical"]:
             factors.append(f"Explicit Impact Level: {explicit_level}")
 
+        # Combine critical scores from relevant categories (e.g., Safety and Equipment)
         critical_score = scores.get("Safety Concern", 0) + scores.get("Machine/Equipment Issue", 0)
         
+        # Determine final priority based on a hierarchy of conditions
         if explicit_level == "Critical" or critical_score >= 3.0:
             return Priority.CRITICAL, factors + (["Direct Critical indicators detected."] if critical_score >= 3.0 else [])
         elif explicit_level == "Significant" or critical_score >= 2.0:
@@ -95,35 +104,45 @@ class ClassifierLogic:
             return Priority.LOW, factors + ["Low severity or general suggestion."]
 
     def _analyze_duplicates(self, text: str, category: str, priority: str) -> Tuple[bool, bool, int, str, str]:
+        """Manages submission history to detect and potentially escalate duplicate issues."""
+        # Remove old submissions from memory
         self.submissions = [s for s in self.submissions if s.timestamp > datetime.now() - timedelta(hours=self.retention_hours)]
+        
         new_hash, similar_count = hashlib.md5(text.lower().encode()).hexdigest(), 0
         
+        # Check for existing similar submissions
         for s in self.submissions:
+            # Match by hash (exact duplicate) or by semantic similarity within the same category
             is_match = (s.submission_hash == new_hash) or \
                        (difflib.SequenceMatcher(None, text.lower(), s.text.lower()).ratio() > self.similarity_threshold and s.category == category)
             if is_match:
                 similar_count += 1
         
         is_dup, escalated = similar_count > 0, False
-        final_prio, original_prio = priority, priority
+        final_prio, original_prio = priority, priority # Store original priority before potential escalation
         
+        # Logic for auto-escalation of Low/Medium issues based on recurrence
         if original_prio in (Priority.LOW.value, Priority.MEDIUM.value) and similar_count >= self.escalation_threshold:
             escalated, final_prio = True, Priority.CRITICAL.value
         elif original_prio == Priority.CRITICAL.value and similar_count > 0:
+            # If an issue is already critical and re-occurs, mark it as escalated for tracking
             escalated = True
         
+        # Store the current submission with its determined (or escalated) priority
         self.submissions.append(SubmissionRecord(text=text, category=category, priority=final_prio, timestamp=datetime.now(), submission_hash=new_hash, is_escalated=escalated))
         return is_dup, escalated, similar_count, final_prio, original_prio
 
     def classify_and_process(self, text: str) -> ClassificationResult:
+        """Main classification pipeline: tokenization -> scoring -> priority -> duplicate analysis."""
         if not text or len(text) > MAX_TEXT_LENGTH:
-            return ClassificationResult("Other", Priority.LOW.value, 0.1, {}, ["Invalid input"])
+            return ClassificationResult("Other", Priority.LOW.value, 0.1, {}, ["Invalid input: Text is empty or too long."])
         
         tokens = self._normalize_text(text)
         scores, keywords = self._calculate_scores(tokens)
         
+        # Determine the best category based on highest score
         best_category = max(scores, key=scores.get, default="Other")
-        if scores.get(best_category, 0) == 0:
+        if scores.get(best_category, 0) == 0: # Default to "Other" if no strong category match
             best_category = "Other"
             
         initial_priority, factors = self._determine_priority(scores, text)
@@ -134,273 +153,51 @@ class ClassifierLogic:
             if similar_count > 0:
                 factors.append(f"Reason: {similar_count} similar reports found.")
         
+        # Calculate a simple confidence score based on the best category's score
         confidence = 0.5 + (scores.get(best_category, 0) / (sum(scores.values()) + 1) * 0.5)
         
-        return ClassificationResult(best_category, final_prio, round(confidence, 3), keywords.get(best_category, {}), factors, is_dup, escalated, original_prio, similar_count)
+        return ClassificationResult(
+            best_category, final_prio, round(confidence, 3), 
+            keywords.get(best_category, {}), factors, 
+            is_dup, escalated, original_prio, similar_count
+        )
 
 classifier_logic = ClassifierLogic()
 
-# --- Flask Routes ---
+# --- Flask API Endpoints ---
+# The root route provides a simple message indicating the API is running.
 @app.route("/", methods=["GET"])
 def home():
-    html_content = """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Feedback Classifier</title>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-        <style>
-            body { 
-                font-family: 'Inter', sans-serif; 
-                margin: 0; 
-                padding: 40px; 
-                background-color: #f0f2f5; 
-                color: #333; 
-                display: flex; 
-                flex-direction: column; 
-                align-items: center; 
-                min-height: 100vh;
-            }
-            .container { 
-                max-width: 600px; 
-                width: 100%;
-                background-color: #ffffff; 
-                padding: 30px; 
-                border-radius: 10px; 
-                box-shadow: 0 4px 15px rgba(0,0,0,0.1); 
-                text-align: center; 
-                box-sizing: border-box; /* Ensures padding doesn't increase total width */
-            }
-            h1 { 
-                color: #2c3e50; 
-                margin-bottom: 25px; 
-                font-size: 2em; 
-                font-weight: 700;
-            }
-            textarea { 
-                width: 100%; 
-                height: 120px; 
-                margin-bottom: 20px; 
-                padding: 15px; 
-                border: 1px solid #e0e0e0; 
-                border-radius: 8px; 
-                font-size: 1em; 
-                resize: vertical; 
-                box-sizing: border-box;
-                font-family: 'Inter', sans-serif;
-            }
-            button { 
-                padding: 12px 25px; 
-                margin: 5px; 
-                border: none; 
-                border-radius: 8px; 
-                cursor: pointer; 
-                background-color: #3498db; 
-                color: white; 
-                font-size: 1.1em; 
-                font-weight: 600;
-                transition: background-color 0.3s ease;
-            }
-            button:hover { 
-                background-color: #2980b9; 
-            }
-            .results { 
-                margin-top: 30px; 
-                text-align: left; 
-                padding-top: 20px;
-                border-top: 1px solid #e0e0e0;
-            }
-            .results div { 
-                margin-bottom: 10px; 
-                font-size: 1em;
-            }
-            .results strong {
-                color: #555;
-            }
-            .priority-critical { color: #e74c3c; font-weight: bold; } /* Red */
-            .priority-high { color: #f39c12; font-weight: bold; }    /* Orange */
-            .priority-medium { color: #3498db; font-weight: bold; }  /* Blue */
-            .priority-low { color: #2ecc77; font-weight: bold; }     /* Green */
-            .error-message { 
-                color: #e74c3c; 
-                margin-top: 15px; 
-                font-weight: 600;
-                background-color: #ffe0e0;
-                padding: 10px;
-                border-radius: 5px;
-            }
-            .loading { 
-                display: inline-block; 
-                width: 15px; 
-                height: 15px; 
-                border: 2px solid rgba(255,255,255,.5); 
-                border-top-color: #fff; 
-                border-radius: 50%; 
-                animation: spin 1s linear infinite; 
-                vertical-align: middle;
-                margin-left: 8px;
-            }
-            @keyframes spin { 
-                to { transform: rotate(360deg); } 
-            }
-            #escalationMessage {
-                margin-top: 10px;
-                padding: 10px;
-                background-color: #fff3cd; /* Light warning yellow */
-                color: #856404;
-                border: 1px solid #ffeeba;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-
-            /* Responsive adjustments */
-            @media (max-width: 600px) {
-                body {
-                    padding: 20px;
-                }
-                .container {
-                    padding: 20px;
-                }
-                h1 {
-                    font-size: 1.8em;
-                }
-                button {
-                    width: calc(100% - 10px); /* Account for margin */
-                    margin: 5px 0;
-                }
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>Feedback Classifier</h1>
-            <textarea id="feedbackText" placeholder="Describe the issue or suggestion..."></textarea>
-            <button id="classifyBtn">Classify</button>
-            <button id="clearBtn">Clear</button>
-            <div id="errorContainer" class="error-message" style="display:none;"></div>
-            <div id="resultsContainer" class="results" style="display:none;">
-                <h2>Classification Results:</h2>
-                <div><strong>Category:</strong> <span id="categoryResult"></span></div>
-                <div><strong>Priority:</strong> <span id="priorityResult"></span></div>
-                <div><strong>Confidence:</strong> <span id="confidenceResult"></span></div>
-                <div><strong>Factors:</strong> <ul id="factorsList"></ul></div>
-                <div><strong>Duplicate Status:</strong> <span id="duplicateStatus"></span></div>
-                <div id="escalationMessage" style="display:none;"></div>
-            </div>
-        </div>
-
-        <script>
-            const API_BASE_URL = ''; // Relative URL for deployment
-            const feedbackText = document.getElementById('feedbackText');
-            const classifyBtn = document.getElementById('classifyBtn');
-            const clearBtn = document.getElementById('clearBtn');
-            const resultsContainer = document.getElementById('resultsContainer');
-            const errorContainer = document.getElementById('errorContainer');
-            const categoryResult = document.getElementById('categoryResult');
-            const priorityResult = document.getElementById('priorityResult');
-            const confidenceResult = document.getElementById('confidenceResult');
-            const factorsList = document.getElementById('factorsList');
-            const duplicateStatus = document.getElementById('duplicateStatus');
-            const escalationMessage = document.getElementById('escalationMessage');
-
-            // --- UI Interaction Logic ---
-            classifyBtn.addEventListener('click', async () => {
-                const text = feedbackText.value.trim();
-                if (!text) {
-                    errorContainer.textContent = "Please enter some feedback.";
-                    errorContainer.style.display = 'block';
-                    return;
-                }
-                errorContainer.style.display = 'none';
-                resultsContainer.style.display = 'none';
-                escalationMessage.style.display = 'none'; // Hide escalation message on new classification
-                classifyBtn.disabled = true;
-                classifyBtn.innerHTML = 'Classifying... <div class="loading"></div>';
-
-                try {
-                    const response = await fetch(`${API_BASE_URL}/classify`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ text: text })
-                    });
-
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.error || `HTTP error! Status: ${response.status}`);
-                    }
-
-                    const result = await response.json();
-                    
-                    categoryResult.textContent = result.category;
-                    priorityResult.textContent = result.priority;
-                    priorityResult.className = `priority-${result.priority.toLowerCase()}`;
-                    confidenceResult.textContent = `${Math.round(result.confidence * 100)}%`;
-                    
-                    factorsList.innerHTML = '';
-                    if (result.priority_factors && result.priority_factors.length > 0) {
-                        result.priority_factors.forEach(factor => {
-                            const li = document.createElement('li');
-                            li.textContent = factor;
-                            factorsList.appendChild(li);
-                        });
-                    } else {
-                        const li = document.createElement('li');
-                        li.textContent = "No specific factors identified.";
-                        factorsList.appendChild(li);
-                    }
-
-                    let dupMsg = result.is_duplicate ? "Yes" : "No";
-                    duplicateStatus.textContent = dupMsg;
-
-                    if (result.escalation_applied) {
-                        escalationMessage.textContent = `Priority was escalated from ${result.original_priority} to ${result.priority} due to ${result.similar_count} similar report(s).`;
-                        escalationMessage.style.display = 'block';
-                    } else {
-                        escalationMessage.style.display = 'none';
-                    }
-                    
-                    resultsContainer.style.display = 'block';
-
-                } catch (error) {
-                    errorContainer.textContent = `Error: ${error.message}`;
-                    errorContainer.style.display = 'block';
-                } finally {
-                    classifyBtn.disabled = false;
-                    classifyBtn.innerHTML = 'Classify';
-                }
-            });
-
-            clearBtn.addEventListener('click', () => {
-                feedbackText.value = '';
-                resultsContainer.style.display = 'none';
-                errorContainer.style.display = 'none';
-                escalationMessage.style.display = 'none';
-            });
-        </script>
-    </body>
-    </html>
-    """
-    return render_template_string(html_content)
+    return jsonify({"message": "Feedback Classification API is running. Use /classify for classification and /stats for statistics."})
 
 @app.route("/classify", methods=["POST"])
 def classify_route():
+    """Endpoint for classifying feedback text. Expects a JSON payload with a 'text' field."""
     try:
         data = request.get_json()
-        text = data.get("text", "")
-        if not text:
-            logging.warning("Missing 'text' in request body for /classify endpoint.")
-            return jsonify({"error": "Missing 'text' in request body"}), 400
+        if not data:
+            logging.error("No JSON payload received.")
+            return jsonify({"error": "No JSON payload provided."}), 400
+
+        text = data.get("text")
+        if not isinstance(text, str):
+            logging.warning(f"Invalid 'text' field type: {type(text)}. Expected string.")
+            return jsonify({"error": "Invalid or missing 'text' field in JSON payload. Expected a string."}), 400
         
+        if not text.strip():
+            logging.warning("Received empty 'text' field.")
+            return jsonify({"error": "Text field cannot be empty."}), 400
+
         result = classifier_logic.classify_and_process(text)
         
+        # Format matched_keywords for consistent JSON output (even if empty)
         formatted_keywords = {
             "critical": result.matched_keywords.get("critical", []),
             "high": result.matched_keywords.get("high", []),
             "medium": result.matched_keywords.get("medium", [])
         }
 
+        # Construct the response payload
         response_data = {
             "category": result.category,
             "priority": result.priority,
@@ -415,13 +212,15 @@ def classify_route():
         
         return jsonify(response_data)
     except Exception as e:
+        # Catch any unexpected errors during processing and log them with traceback
         logging.error(f"Server-side error during classification: {e}", exc_info=True)
-        return jsonify({"error": "An internal server error occurred during classification."}), 500
+        return jsonify({"error": "An internal server error occurred during classification. Please check server logs."}), 500
 
-# This endpoint is no longer directly used by the minimalistic UI, but kept for API completeness
-@app.route("/stats", methods=["GET"]) 
+@app.route("/stats", methods=["GET"])
 def stats_route():
+    """Endpoint for retrieving duplicate detection statistics."""
     try:
+        # Ensure submissions list is cleaned before calculating stats
         classifier_logic.submissions = [s for s in classifier_logic.submissions if s.timestamp > datetime.now() - timedelta(hours=classifier_logic.retention_hours)]
         total_submissions = len(classifier_logic.submissions)
         escalated_count = sum(1 for s in classifier_logic.submissions if s.is_escalated)
@@ -436,7 +235,9 @@ def stats_route():
         return jsonify(stats)
     except Exception as e:
         logging.error(f"Server-side error generating stats: {e}", exc_info=True)
-        return jsonify({"error": "An internal server error occurred while fetching statistics."}), 500
+        return jsonify({"error": "An internal server error occurred while fetching statistics. Please check server logs."}), 500
 
 if __name__ == "__main__":
+    # Run the Flask application. debug=True enables reloader and debugger.
+    # For production, set debug=False and use a production-ready WSGI server like Gunicorn.
     app.run(debug=True, host="0.0.0.0", port=5000)
