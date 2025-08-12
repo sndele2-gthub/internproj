@@ -47,13 +47,13 @@ KNOWLEDGE_BASE = {
     "Safety Concern": {
         "critical": {"emergency", "fire", "explosion", "fatal", "dangerous", "imminent danger", "life-threatening", "critical injury", "collapse", "toxic leak", "electrocution", "unsafe structure", "structural failure", "immediate danger"},
         "high": {"hazard", "unsafe", "accident", "injury risk", "fall risk", "structural damage", "chemical spill", "electrical issue", "no safety gear", "blocked exit", "gas leak", "safety violation", "exposed wiring"},
-        "medium": {"safety concern", "risk identified", "warning sign", "slippery floor", "trip hazard", "poor visibility", "loud noise", "minor injury", "first aid needed", "broken glass", "spill", "unsecured item"},
+        "medium": {"safety concern", "risk identified", "warning sign", "slippery floor", "trip hazard", "poor visibility", "loud noise", "minor injury", "first aid needed", "broken glass", "spill", "unsecured item", "light out"}, # Tweak: Added "light out"
         "negation": {"not", "no", "without", "lacking", "un-", "non-", "safe", "clear", "insignificant", "minimal risk"},
     },
     "Machine/Equipment Issue": {
         "critical": {"complete failure", "total shutdown", "catastrophic", "unusable", "major breakdown", "production halt", "burst pipe", "electrical short", "machine dead", "severely damaged", "irreparable"},
         "high": {"malfunction", "down", "stopped working", "leaking fluid", "faulty", "error code", "damaged", "overheating", "smoking", "intermittent failure", "broken part", "system crash", "no power", "offline"},
-        "medium": {"noise", "vibration", "loose part", "maintenance needed", "humming", "grinding", "stuck", "press issue", "adjustment required", "defect", "calibration", "worn out", "slow performance", "clogged", "filter", "compressor", "engine", "pump", "robot", "conveyor", "temperature", "cold", "warm", "comfort", "HVAC", "ventilation", "drafty"}, # Re-allocated environment keywords here
+        "medium": {"noise", "vibration", "loose part", "maintenance needed", "humming", "grinding", "stuck", "press issue", "adjustment required", "defect", "calibration", "worn out", "slow performance", "clogged", "filter", "compressor", "engine", "pump", "robot", "conveyor", "temperature", "cold", "warm", "comfort", "HVAC", "ventilation", "drafty", "not working"}, # Tweak: Added "not working"
         "negation": {"not", "no", "without", "un-", "non-", "working", "functional", "repaired", "fixed", "normal operation"},
     },
     "Process Improvement Idea": {
@@ -235,7 +235,7 @@ class ClassifierLogic:
             confidence_score_0_10 = 7
         elif score_for_confidence < 6.0: # Strong critical + some others
             confidence_score_0_10 = 9
-        else: # Very strong accumulation of scores
+        else: # score >= 6.0 (multiple strong matches)
             confidence_score_0_10 = 10
 
         # Ensure the score is clamped between 0 and 10
