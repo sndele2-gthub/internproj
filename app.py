@@ -74,7 +74,7 @@ class ClassifierLogic:
     def __init__(self):
         self.submissions: List[SubmissionRecord] = []
         self.retention_hours = 168
-        self.similarity_threshold = 0.7 # Increased threshold for stricter duplicate matching
+        self.similarity_threshold = 0.65 # Adjusted threshold for improved duplicate detection
         self.escalation_threshold = 2
 
     def _normalize_text(self, text: str) -> List[str]:
@@ -148,35 +148,41 @@ class ClassifierLogic:
 
     def _analyze_duplicates(self, text: str, category: str, priority: str) -> Tuple[bool, bool, int, str, str]:
         """Manages submission history to detect and potentially escalate duplicate issues."""
-        # Remove old submissions from memory
+        # Remove old submissions from memory that are outside the retention window
         self.submissions = [s for s in self.submissions if s.timestamp > datetime.now() - timedelta(hours=self.retention_hours)]
         
         new_hash = hashlib.md5(text.lower().encode()).hexdigest()
         similar_count = 0
         
+        logging.info(f"Analyzing duplicates for new submission (Category: {category}, Priority: {priority}, Text: '{text[:50]}...')")
+        
         for s in self.submissions:
-            # First, check for exact hash match (very strong duplicate)
+            # Check for exact hash match (strongest form of duplicate)
             if s.submission_hash == new_hash:
                 similar_count += 1
-                continue # No need for fuzzy matching if exact hash
+                logging.info(f"  Exact hash match found for previous submission '{s.text[:50]}...'. Current count: {similar_count}")
+                continue # Move to next submission if exact match found
             
-            # Then, perform fuzzy matching only if categories are the same
+            # Perform fuzzy matching only if categories are the same
             if s.category == category:
                 similarity_ratio = difflib.SequenceMatcher(None, text.lower(), s.text.lower()).ratio()
                 if similarity_ratio > self.similarity_threshold:
                     similar_count += 1
-        
+                    logging.info(f"  Fuzzy match found (Ratio: {similarity_ratio:.2f} > {self.similarity_threshold}) for previous submission '{s.text[:50]}...' (Category: {s.category}). Current count: {similar_count}")
+            else:
+                logging.info(f"  Skipping fuzzy match for '{s.text[:50]}...' due to category mismatch ({s.category} != {category})")
+
         is_dup, escalated = similar_count > 0, False
         final_prio, original_prio = priority, priority # Store original priority before potential escalation
         
         # Logic for auto-escalation of Low/Medium issues based on recurrence
         if original_prio in (Priority.LOW.value, Priority.MEDIUM.value) and similar_count >= self.escalation_threshold:
             escalated, final_prio = True, Priority.CRITICAL.value
-            logging.info(f"Escalating from {original_prio} to {final_prio} due to {similar_count} similar entries for text: '{text[:50]}...'")
+            logging.info(f"ESCALATION: Priority for '{text[:50]}...' escalated from {original_prio} to {final_prio} due to {similar_count} similar entries (threshold: {self.escalation_threshold}).")
         elif original_prio == Priority.CRITICAL.value and similar_count > 0:
             # If an issue is already critical and re-occurs, mark it as escalated for tracking
             escalated = True
-            logging.info(f"Critical issue re-occurred for text: '{text[:50]}...' (similar_count: {similar_count})")
+            logging.info(f"RE-OCCURRENCE: Critical issue '{text[:50]}...' is a duplicate (similar_count: {similar_count}), indicating recurrence.")
         
         # Store the current submission with its determined (or escalated) priority
         self.submissions.append(SubmissionRecord(text=text, category=category, priority=final_prio, timestamp=datetime.now(), submission_hash=new_hash, is_escalated=escalated))
@@ -213,40 +219,24 @@ class ClassifierLogic:
                 factors.append(f"Reason: {similar_count} similar reports found.")
         
         # Calculate confidence as an integer between 0 and 10
-        # The score is based on the best category's score relative to a conceptual max score.
-        # Max score for confidence for any category: sum of max scores (3.0 for critical, 2.0 for high, 1.0 for medium)
-        # This is the maximum possible score if all types of keywords are present and weighted.
-        # A reasonable upper bound for max_score_potential could be the sum of highest weights from each category type.
-        # For simplicity, let's assume a max potential score that reflects strong keyword presence.
-        
-        # Max theoretical score for a single category is when a critical, high, and medium keyword are all present.
-        # Max score for a single token hitting critical is 3.0. A phrase might have multiple such keywords.
-        # Let's consider an effective max score that implies high confidence.
-        # If a category score is 3.0 (one critical keyword), it should be high confidence.
-        # If it's 6.0 (e.g., two critical keywords or critical+high+medium), it should be full confidence.
-        
         score_for_confidence = scores.get(best_category, 0)
         
-        # Mapping:
-        # Score 0 -> Confidence 0
-        # Score 1-2 -> Confidence 1-3 (Medium keywords)
-        # Score 3-5 -> Confidence 4-7 (High/Critical keywords, some combination)
-        # Score 6+ -> Confidence 8-10 (Multiple strong keywords)
-        
-        if score_for_confidence <= 0:
-            confidence_score_0_10 = 0 # No relevant keywords found
-        elif score_for_confidence < 1.5: # 0 < score < 1.5
-            confidence_score_0_10 = 1 # Very low confidence, perhaps only very weak matches
-        elif score_for_confidence < 2.5: # 1.5 <= score < 2.5 (e.g., one medium keyword or more than one weak)
-            confidence_score_0_10 = 3 # Low to medium confidence
-        elif score_for_confidence < 3.5: # 2.5 <= score < 3.5 (e.g., one high or multiple mediums)
-            confidence_score_0_10 = 5 # Medium confidence
-        elif score_for_confidence < 4.5: # 3.5 <= score < 4.5 (e.g., one critical)
-            confidence_score_0_10 = 7 # Good confidence
-        elif score_for_confidence < 6.0: # 4.5 <= score < 6.0 (e.g., critical + medium/high)
-            confidence_score_0_10 = 9 # High confidence
-        else: # score >= 6.0 (multiple strong matches)
-            confidence_score_0_10 = 10 # Very High/Full confidence
+        # --- NEW Confidence Calculation Logic (More granular mapping) ---
+        # Map raw score to 0-10 confidence. This mapping is subjective and can be fine-tuned.
+        if score_for_confidence <= 0.5: # Very weak or no matches
+            confidence_score_0_10 = 0
+        elif score_for_confidence < 1.0: # Single medium keyword, or very weak sum
+            confidence_score_0_10 = 1
+        elif score_for_confidence < 2.0: # Moderate sum, maybe couple of mediums
+            confidence_score_0_10 = 3
+        elif score_for_confidence < 3.0: # Strong medium, or one low high keyword
+            confidence_score_0_10 = 5
+        elif score_for_confidence < 4.5: # One critical keyword, or multiple high
+            confidence_score_0_10 = 7
+        elif score_for_confidence < 6.0: # Strong critical + some others
+            confidence_score_0_10 = 9
+        else: # Very strong accumulation of scores
+            confidence_score_0_10 = 10
 
         # Ensure the score is clamped between 0 and 10
         confidence_score_0_10 = max(0, min(10, confidence_score_0_10))
