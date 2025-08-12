@@ -46,32 +46,68 @@ class ClassificationResult:
 MAX_TEXT_LENGTH = 5000
 KNOWLEDGE_BASE = {
     "Safety Concern": {
-        "critical": {"emergency", "fire", "explosion", "fatal", "dangerous", "imminent danger", "life-threatening", "critical injury", "collapse", "toxic leak", "electrocution", "unsafe structure", "structural failure", "immediate danger", "chemical exposure", "gas leak", "confined space", "fall from height"},
-        "high": {"hazard", "unsafe", "accident", "injury risk", "fall risk", "structural damage", "chemical spill", "electrical issue", "no safety gear", "blocked exit", "safety violation", "exposed wiring", "lockout failure", "ppe missing", "guardrail damaged", "near miss", "serious injury", "osha violation"},
-        "medium": {"safety concern", "risk identified", "warning sign", "slippery floor", "trip hazard", "poor visibility", "loud noise", "minor injury", "first aid needed", "broken glass", "spill", "unsecured item", "light out", "ergonomic issue", "housekeeping", "access issue", "signage missing"},
-        "negation": {"not", "no", "without", "lacking", "un-", "non-", "safe", "clear", "resolved", "fixed", "repaired", "insignificant", "minimal risk", "controlled"},
+        "critical": {
+            "emergency","fire","explosion","fatal","dangerous","imminent danger","life-threatening",
+            "critical injury","collapse","toxic leak","electrocution","unsafe structure","structural failure",
+            "immediate danger","chemical exposure","gas leak","confined space","fall from height"
+        },
+        "high": {
+            "hazard","unsafe","accident","injury risk","fall risk","structural damage","chemical spill",
+            "electrical issue","no safety gear","blocked exit","safety violation","exposed wiring","lockout failure",
+            "ppe missing","guardrail damaged","near miss","serious injury","osha violation"
+        },
+        "medium": {
+            "safety concern","risk identified","warning sign","slippery floor","trip hazard","poor visibility",
+            "loud noise","minor injury","first aid needed","broken glass","spill","unsecured item","light out",
+            "ergonomic issue","housekeeping","access issue","signage missing"
+        },
+        "negation": {"not","no","without","lacking","un-","non-","safe","clear","resolved","fixed","repaired","insignificant","minimal risk","controlled"},
     },
     "Machine/Equipment Issue": {
-        "critical": {"complete failure", "total shutdown", "catastrophic", "unusable", "major breakdown", "production halt", "burst pipe", "electrical short", "machine dead", "severely damaged", "irreparable", "system crash", "emergency stop", "production line down", "critical equipment failure"},
-        "high": {"malfunction", "down", "stopped working", "leaking fluid", "faulty", "error code", "damaged", "overheating", "smoking", "intermittent failure", "broken part", "no power", "offline", "bearing failure", "motor burned", "hydraulic failure", "control system down", "production impact"},
-        "medium": {"noise", "vibration", "loose part", "maintenance needed", "humming", "grinding", "stuck", "press issue", "adjustment required", "defect", "calibration", "worn out", "slow performance", "clogged", "filter", "not working", "sensor issue", "alignment", "belt loose", "preventive maintenance"},
-        "negation": {"not", "no", "without", "un-", "non-", "working", "functional", "repaired", "fixed", "normal operation", "running smoothly", "operating normally", "restored"},
+        "critical": {
+            "complete failure","total shutdown","catastrophic","unusable","major breakdown","production halt",
+            "burst pipe","electrical short","machine dead","severely damaged","irreparable","system crash",
+            "emergency stop","production line down","critical equipment failure"
+        },
+        "high": {
+            "malfunction","down","stopped working","leaking fluid","faulty","error code","damaged","overheating",
+            "smoking","intermittent failure","broken part","no power","offline","bearing failure",
+            "motor burned","hydraulic failure","control system down","production impact"
+        },
+        "medium": {
+            "noise","vibration","loose part","maintenance needed","humming","grinding","stuck","press issue",
+            "adjustment required","defect","calibration","worn out","slow performance","clogged","filter",
+            "not working","sensor issue","alignment","belt loose","preventive maintenance"
+        },
+        "negation": {"not","no","without","un-","non-","working","functional","repaired","fixed","normal operation","running smoothly","operating normally","restored"},
     },
     "Process Improvement": {
-        "critical": {"bottleneck", "critical delay", "major inefficiency", "costly error", "legal non-compliance", "regulatory violation", "audit failure", "severe waste", "compliance breach", "quality failure", "customer complaint", "product recall", "safety violation", "environmental violation"},
-        "high": {"automate", "streamline", "optimize", "reduce waste", "cost saving", "quality improvement", "significant inefficiency", "redundant steps", "data inaccuracy", "improve workflow", "new procedure", "expedite", "better method", "eliminate waste", "lean implementation", "six sigma opportunity"},
-        "medium": {"improve", "suggestion", "idea", "process enhancement", "workflow improvement", "better method", "new system", "simplify", "training need", "communication gap", "feedback mechanism", "documentation", "best practice", "continuous improvement", "kaizen", "procedure update"},
-        "negation": {"not", "no", "without", "current process is fine", "working well", "efficient", "optimal", "no improvement needed", "satisfactory", "adequate"},
+        "critical": {
+            "bottleneck","critical delay","major inefficiency","costly error","legal non-compliance","regulatory violation",
+            "audit failure","severe waste","compliance breach","quality failure","customer complaint","product recall",
+            "safety violation","environmental violation"
+        },
+        "high": {
+            "automate","streamline","optimize","reduce waste","cost saving","quality improvement","significant inefficiency",
+            "redundant steps","data inaccuracy","improve workflow","new procedure","expedite","better method",
+            "eliminate waste","lean implementation","six sigma opportunity"
+        },
+        "medium": {
+            "improve","suggestion","idea","process enhancement","workflow improvement","better method","new system",
+            "simplify","training need","communication gap","feedback mechanism","documentation","best practice",
+            "continuous improvement","kaizen","procedure update"
+        },
+        "negation": {"not","no","without","current process is fine","working well","efficient","optimal","no improvement needed","satisfactory","adequate"},
     },
     "Quality Issue": {
-        "critical": {"product defect", "quality failure", "out of spec", "customer reject", "recall", "major nonconformance", "critical defect", "safety defect", "regulatory failure"},
-        "high": {"quality issue", "defective", "rework", "scrap", "inspection failure", "tolerance exceeded", "material defect", "process variation", "quality alert"},
-        "medium": {"minor defect", "cosmetic issue", "quality observation", "improvement opportunity", "quality suggestion", "process monitoring", "documentation issue"},
-        "negation": {"quality good", "meets spec", "acceptable quality", "no defects", "passed inspection"},
+        "critical": {"product defect","quality failure","out of spec","customer reject","recall","major nonconformance","critical defect","safety defect","regulatory failure"},
+        "high": {"quality issue","defective","rework","scrap","inspection failure","tolerance exceeded","material defect","process variation","quality alert"},
+        "medium": {"minor defect","cosmetic issue","quality observation","improvement opportunity","quality suggestion","process monitoring","documentation issue"},
+        "negation": {"quality good","meets spec","acceptable quality","no defects","passed inspection"},
     },
     "Other": {
-        "medium": {"general inquiry", "feedback", "suggestion", "question", "comment", "miscellaneous", "supplies", "lighting", "parking", "facility", "administrative", "communication"},
-        "negation": [],
+        "medium": {"general inquiry","feedback","suggestion","question","comment","miscellaneous","supplies","lighting","parking","facility","administrative","communication"},
+        "negation": set(),  # ensure it's a set for checks below
     }
 }
 
@@ -86,65 +122,74 @@ class ClassifierLogic:
     def _normalize_text(self, text: str) -> List[str]:
         """Enhanced text normalization."""
         text = re.sub(r'[^\w\s\-\.]', ' ', text.lower())
-        tokens = re.findall(r'\b\w+(?:[-]\w+)?\b', text)
+        tokens = re.findall(r'\b\w+(?:-\w+)?\b', text)
         return [token for token in tokens if len(token) > 2]
 
     def _extract_context_clues(self, text: str) -> Dict:
         """Extract urgency and impact indicators."""
         context = {"urgency_indicators": [], "impact_scale": []}
         text_lower = text.lower()
-        
-        urgency_patterns = [r"\b(urgent|asap|immediate|emergency|critical|now)\b", r"\b(today|this morning|right now|immediately)\b"]
-        impact_patterns = [r"\b(affects? \w+ people|multiple|several|many|all)\b", r"\b(department|shift|team|entire|whole)\b"]
-        
+
+        urgency_patterns = [
+            r"\b(urgent|asap|immediate|emergency|critical|now)\b",
+            r"\b(today|this morning|right now|immediately)\b"
+        ]
+        impact_patterns = [
+            r"\b(affects?\s+\w+\s+people|multiple|several|many|all)\b",
+            r"\b(department|shift|team|entire|whole)\b"
+        ]
+
         for pattern in urgency_patterns:
             context["urgency_indicators"].extend(re.findall(pattern, text_lower))
         for pattern in impact_patterns:
             context["impact_scale"].extend(re.findall(pattern, text_lower))
-            
+
         return context
 
     def _calculate_scores(self, tokens: List[str], context: Dict) -> Tuple[Dict, Dict]:
         """Enhanced scoring with context awareness."""
         cat_scores, matched_keys = defaultdict(float), defaultdict(lambda: defaultdict(list))
-        
-        for cat, data in KNOWLEDGE_BASE.items():
-            for i, token in enumerate(tokens):
-                score, level = 0, None
-                
-                critical_keywords = data.get("critical", set())
-                high_keywords = data.get("high", set())
-                medium_keywords = data.get("medium", set())
-                negation_keywords = data.get("negation", set())
 
-                if token in critical_keywords: score, level = 3.0, "critical"
-                elif token in high_keywords: score, level = 2.0, "high"
-                elif token in medium_keywords: score, level = 1.0, "medium"
-                
+        for cat, data in KNOWLEDGE_BASE.items():
+            negation_keywords = set(data.get("negation", set()))
+            for i, token in enumerate(tokens):
+                score, level = 0.0, None
+
+                if token in data.get("critical", set()):
+                    score, level = 3.0, "critical"
+                elif token in data.get("high", set()):
+                    score, level = 2.0, "high"
+                elif token in data.get("medium", set()):
+                    score, level = 1.0, "medium"
+
                 if score > 0:
                     # Context boosters
-                    if context["urgency_indicators"] and level in ["critical", "high"]:
+                    if context["urgency_indicators"] and level in ("critical", "high"):
                         score *= 1.3
-                    if context["impact_scale"] and cat in ["Safety Concern", "Machine/Equipment Issue"]:
+                    if context["impact_scale"] and cat in ("Safety Concern", "Machine/Equipment Issue"):
                         score *= 1.2
-                    
-                    # Negation check
-                    negation_window = tokens[max(0, i-3):i+4]
-                    if not any(t in negation_keywords for t in negation_window):
+
+                    # Negation window
+                    window = tokens[max(0, i - 3): i + 4]
+                    if not any(t in negation_keywords for t in window):
                         cat_scores[cat] += score
                         matched_keys[cat][level].append(token)
-        
+
         return dict(cat_scores), dict(matched_keys)
 
     def _determine_priority(self, scores: Dict, text: str, context: Dict) -> Tuple[Priority, List[str]]:
         """Enhanced priority determination."""
         factors, text_lower = [], text.lower()
-        
-        # Explicit priority patterns
-        explicit_patterns = [(r"impact level:\s*(critical|severe)", Priority.CRITICAL), (r"impact level:\s*(significant|high)", Priority.HIGH),
-                           (r"impact level:\s*(moderate|medium)", Priority.MEDIUM), (r"impact level:\s*(minimal|low)", Priority.LOW),
-                           (r"\b(critical|emergency|urgent)\b", Priority.HIGH), (r"\b(life.?threatening|immediate.?danger)\b", Priority.CRITICAL)]
-        
+
+        # Explicit/implicit priority patterns
+        explicit_patterns = [
+            (r"impact level:\s*(critical|severe)", Priority.CRITICAL),
+            (r"impact level:\s*(significant|high)", Priority.HIGH),
+            (r"impact level:\s*(moderate|medium)", Priority.MEDIUM),
+            (r"impact level:\s*(minimal|low)", Priority.LOW),
+            (r"\b(life.?threatening|immediate.?danger)\b", Priority.CRITICAL),
+            (r"\b(critical|emergency|urgent)\b", Priority.HIGH),
+        ]
         for pattern, priority in explicit_patterns:
             if re.search(pattern, text_lower):
                 factors.append(f"Explicit priority indicator: {pattern}")
@@ -153,21 +198,23 @@ class ClassifierLogic:
         # Context multipliers
         urgency_mult = 1.4 if context["urgency_indicators"] else 1.0
         impact_mult = 1.2 if context["impact_scale"] else 1.0
-        
         if context["urgency_indicators"]:
             factors.append(f"Urgency indicators: {context['urgency_indicators']}")
         if context["impact_scale"]:
             factors.append(f"Impact scale indicators: {context['impact_scale']}")
 
         # Category scoring
-        safety_equipment_score = (scores.get("Safety Concern", 0) * 1.6 + scores.get("Machine/Equipment Issue", 0) * 1.3 + 
-                                scores.get("Quality Issue", 0) * 1.1) * urgency_mult * impact_mult
-        
-        if safety_equipment_score >= 4.0:
-            factors.append(f"Critical safety/equipment score: {safety_equipment_score:.2f}")
+        safety_equipment = (
+            scores.get("Safety Concern", 0) * 1.6 +
+            scores.get("Machine/Equipment Issue", 0) * 1.3 +
+            scores.get("Quality Issue", 0) * 1.1
+        ) * urgency_mult * impact_mult
+
+        if safety_equipment >= 4.0:
+            factors.append(f"Critical safety/equipment score: {safety_equipment:.2f}")
             return Priority.CRITICAL, factors
-        elif safety_equipment_score >= 2.5:
-            factors.append(f"High priority indicators: {safety_equipment_score:.2f}")
+        elif safety_equipment >= 2.5:
+            factors.append(f"High priority indicators: {safety_equipment:.2f}")
             return Priority.HIGH, factors
         elif any(s > 0.8 for s in scores.values()):
             factors.append("Medium priority indicators detected")
@@ -178,63 +225,91 @@ class ClassifierLogic:
 
     def _calculate_confidence(self, scores: Dict, best_category: str, context: Dict, matched_keywords: Dict) -> int:
         """Enhanced confidence calculation."""
-        base_score = scores.get(best_category, 0)
-        
-        if base_score <= 0.3: base_confidence = 1
-        elif base_score <= 0.8: base_confidence = 2
-        elif base_score <= 1.5: base_confidence = 4
-        elif base_score <= 2.5: base_confidence = 6
-        elif base_score <= 4.0: base_confidence = 8
-        else: base_confidence = 9
+        base = scores.get(best_category, 0.0)
+        if base <= 0.3: conf = 1
+        elif base <= 0.8: conf = 2
+        elif base <= 1.5: conf = 4
+        elif base <= 2.5: conf = 6
+        elif base <= 4.0: conf = 8
+        else: conf = 9
 
-        # Confidence boosters
         boosts = 0
-        if len([k for k in matched_keywords.values() if k]) >= 2: boosts += 1
-        if len(context["urgency_indicators"]) + len(context["impact_scale"]) >= 2: boosts += 1
+        if len([v for v in matched_keywords.values() if v]) >= 2: boosts += 1
+        if (len(context["urgency_indicators"]) + len(context["impact_scale"])) >= 2: boosts += 1
         if best_category != "Other": boosts += 1
-        if any("critical" in str(k) for k in matched_keywords.values()): boosts += 2
+        if any("critical" in str(v) for v in matched_keywords.values()): boosts += 2
 
-        return min(10, max(1, base_confidence + boosts))
+        return max(1, min(10, conf + boosts))
 
     def _analyze_duplicates(self, text: str, category: str, priority: str, confidence: int) -> Tuple[bool, bool, int, str, str]:
         """Enhanced duplicate analysis."""
-        self.submissions = [s for s in self.submissions if s.timestamp > datetime.now() - timedelta(hours=self.retention_hours)]
-        
+        # Trim old
+        cutoff = datetime.now() - timedelta(hours=self.retention_hours)
+        self.submissions = [s for s in self.submissions if s.timestamp > cutoff]
+
         new_hash = hashlib.md5(text.lower().encode()).hexdigest()
-        similar_count = sum(1 for s in self.submissions if s.submission_hash == new_hash or 
-                           (s.category == category and difflib.SequenceMatcher(None, text.lower(), s.text.lower()).ratio() > self.similarity_threshold))
-        
-        is_dup, escalated, final_prio, original_prio = similar_count > 0, False, priority, priority
-        
-        if priority in [Priority.LOW.value, Priority.MEDIUM.value] and similar_count >= self.escalation_threshold:
-            escalated, final_prio = True, Priority.HIGH.value if priority == Priority.LOW.value else Priority.CRITICAL.value
+        similar_count = 0
+        for s in self.submissions:
+            if s.submission_hash == new_hash:
+                similar_count += 1
+                continue
+            if s.category == category:
+                ratio = difflib.SequenceMatcher(None, text.lower(), s.text.lower()).ratio()
+                if ratio > self.similarity_threshold:
+                    similar_count += 1
+
+        is_dup = similar_count > 0
+        escalated = False
+        final_prio = priority
+        original_prio = priority
+
+        if priority in (Priority.LOW.value, Priority.MEDIUM.value) and similar_count >= self.escalation_threshold:
+            escalated = True
+            final_prio = Priority.HIGH.value if priority == Priority.LOW.value else Priority.CRITICAL.value
         elif priority == Priority.CRITICAL.value and similar_count > 0:
             escalated = True
-        
-        self.submissions.append(SubmissionRecord(text, category, final_prio, datetime.now(), new_hash, escalated, confidence))
+
+        self.submissions.append(
+            SubmissionRecord(
+                text=text,
+                category=category,
+                priority=final_prio,
+                timestamp=datetime.now(),
+                submission_hash=new_hash,
+                is_escalated=escalated,
+                confidence_score=confidence,
+            )
+        )
         return is_dup, escalated, similar_count, final_prio, original_prio
 
     def classify_and_process(self, text: str) -> ClassificationResult:
         """Main enhanced classification pipeline."""
-        if not text or len(text) > MAX_TEXT_LENGTH:
+        if not text or not text.strip() or len(text) > MAX_TEXT_LENGTH:
             return ClassificationResult("Invalid Input", Priority.LOW.value, 0, {}, ["Invalid input"])
-        
+
         tokens = self._normalize_text(text)
         context = self._extract_context_clues(text)
         scores, keywords = self._calculate_scores(tokens, context)
-        
+
         categories_with_scores = {cat: score for cat, score in scores.items() if score > 0}
         best_category = max(categories_with_scores, key=categories_with_scores.get) if categories_with_scores else "Other"
-        
-        initial_priority, factors = self._determine_priority(scores, text, context)
-        confidence = self._calculate_confidence(scores, best_category, context, keywords)
-        is_dup, escalated, similar_count, final_prio, original_prio = self._analyze_duplicates(text, best_category, initial_priority.value, confidence)
-        
-        if escalated:
-            factors.append(f"Priority escalated: {original_prio} → {final_prio}")
-        
-        return ClassificationResult(best_category, final_prio, confidence, keywords.get(best_category, {}), factors, is_dup, escalated, original_prio, similar_count)
 
+        initial_priority, factors = self._determine_priority(scores, text, context)
+        confidence = self._calculate_confidence(scores, best_category, context, keywords.get(best_category, {}))
+        is_dup, escalated, similar_count, final_prio, original_prio = self._analyze_duplicates(
+            text, best_category, initial_priority.value, confidence
+        )
+
+        if escalated:
+            factors.append(f"Priority escalated: {original_prio} \u2192 {final_prio}")
+
+        return ClassificationResult(
+            best_category, final_prio, confidence,
+            keywords.get(best_category, {}), factors,
+            is_dup, escalated, original_prio, similar_count
+        )
+
+# 🔧 INSTANTIATE the classifier (this was missing and caused runtime errors)
 classifier_logic = ClassifierLogic()
 
 # --- HTML Interface Template ---
@@ -407,47 +482,57 @@ def classify_route():
         data = request.get_json(silent=True)
         if not data or not isinstance(data.get("text"), str) or not data.get("text").strip():
             return jsonify({"error": "Invalid text input"}), 400
-        
+
         result = classifier_logic.classify_and_process(data["text"])
-        
+
+        # Ensure matched_keywords always has the expected keys
+        mk = result.matched_keywords or {}
+        formatted_keywords = {
+            "critical": mk.get("critical", []),
+            "high": mk.get("high", []),
+            "medium": mk.get("medium", []),
+        }
+
         return jsonify({
             "category": result.category,
             "priority": result.priority,
             "confidence": result.confidence,
-            "matched_keywords": result.matched_keywords,
+            "matched_keywords": formatted_keywords,
             "priority_factors": result.priority_factors,
             "is_duplicate": result.is_duplicate,
             "escalation_applied": result.escalation_applied,
             "original_priority": result.original_priority,
             "similar_count": result.similar_count
         })
-        
+
     except Exception as e:
-        logging.error(f"Classification error: {e}")
+        logging.error(f"Classification error: {e}", exc_info=True)
         return jsonify({"error": "Internal server error"}), 500
 
 @app.route("/stats", methods=["GET"])
 def stats_route():
     """Enhanced statistics endpoint."""
     try:
-        classifier_logic.submissions = [s for s in classifier_logic.submissions if 
-                                      s.timestamp > datetime.now() - timedelta(hours=classifier_logic.retention_hours)]
-        
+        classifier_logic.submissions = [
+            s for s in classifier_logic.submissions
+            if s.timestamp > datetime.now() - timedelta(hours=classifier_logic.retention_hours)
+        ]
+
         total = len(classifier_logic.submissions)
         escalated = sum(1 for s in classifier_logic.submissions if s.is_escalated)
-        
+
         categories = defaultdict(int)
         priorities = defaultdict(int)
         avg_confidence = 0
-        
+
         for s in classifier_logic.submissions:
             categories[s.category] += 1
             priorities[s.priority] += 1
             avg_confidence += s.confidence_score
-        
+
         if total > 0:
             avg_confidence = round(avg_confidence / total, 2)
-        
+
         return jsonify({
             "system_info": {
                 "total_submissions_retained": total,
@@ -462,9 +547,9 @@ def stats_route():
                 "priority_breakdown": dict(priorities)
             }
         })
-        
+
     except Exception as e:
-        logging.error(f"Stats error: {e}")
+        logging.error(f"Stats error: {e}", exc_info=True)
         return jsonify({"error": "Unable to generate statistics"}), 500
 
 @app.route("/health", methods=["GET"])
