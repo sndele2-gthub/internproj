@@ -45,28 +45,27 @@ class ClassificationResult:
 MAX_TEXT_LENGTH = 5000
 KNOWLEDGE_BASE = {
     "Safety Concern": {
-        "critical": {"emergency", "fire", "explosion", "fatal", "dangerous", "imminent danger", "life-threatening", "critical injury", "collapse", "toxic leak", "electrocution"},
-        "high": {"hazard", "unsafe", "accident", "injury risk", "fall risk", "structural damage", "chemical spill", "electrical issue", "no safety gear", "blocked exit", "gas leak"},
-        "medium": {"safety concern", "risk identified", "warning sign", "slippery floor", "trip hazard", "poor visibility", "loud noise", "minor injury", "first aid needed"},
-        "negation": {"not", "no", "without", "lacking", "un-", "non-", "safe", "clear", "insignificant"},
+        "critical": {"emergency", "fire", "explosion", "fatal", "dangerous", "imminent danger", "life-threatening", "critical injury", "collapse", "toxic leak", "electrocution", "unsafe structure", "structural failure", "immediate danger"},
+        "high": {"hazard", "unsafe", "accident", "injury risk", "fall risk", "structural damage", "chemical spill", "electrical issue", "no safety gear", "blocked exit", "gas leak", "safety violation", "exposed wiring"},
+        "medium": {"safety concern", "risk identified", "warning sign", "slippery floor", "trip hazard", "poor visibility", "loud noise", "minor injury", "first aid needed", "broken glass", "spill", "unsecured item"},
+        "negation": {"not", "no", "without", "lacking", "un-", "non-", "safe", "clear", "insignificant", "minimal risk"},
     },
     "Machine/Equipment Issue": {
-        "critical": {"complete failure", "total shutdown", "catastrophic", "unusable", "major breakdown", "production halt", "burst pipe", "electrical short"},
-        "high": {"malfunction", "down", "stopped working", "leaking fluid", "faulty", "error code", "damaged", "overheating", "smoking", "intermittent failure", "broken part"},
-        "medium": {"noise", "vibration", "loose part", "maintenance needed", "humming", "grinding", "stuck", "press issue", "adjustment required", "defect", "calibration", "worn out", "slow performance"},
-        "negation": {"not", "no", "without", "un-", "non-", "working", "functional", "repaired"},
+        "critical": {"complete failure", "total shutdown", "catastrophic", "unusable", "major breakdown", "production halt", "burst pipe", "electrical short", "machine dead", "severely damaged", "irreparable"},
+        "high": {"malfunction", "down", "stopped working", "leaking fluid", "faulty", "error code", "damaged", "overheating", "smoking", "intermittent failure", "broken part", "system crash", "no power", "offline"},
+        "medium": {"noise", "vibration", "loose part", "maintenance needed", "humming", "grinding", "stuck", "press issue", "adjustment required", "defect", "calibration", "worn out", "slow performance", "clogged", "filter", "compressor", "engine", "pump", "robot", "conveyor", "temperature", "cold", "warm", "comfort", "HVAC", "ventilation", "drafty"}, # Re-allocated environment keywords here
+        "negation": {"not", "no", "without", "un-", "non-", "working", "functional", "repaired", "fixed", "normal operation"},
     },
     "Process Improvement Idea": {
-        "critical": {"bottleneck", "critical delay", "major inefficiency", "costly error", "legal non-compliance"},
-        "high": {"automate", "streamline", "optimize", "reduce waste", "cost saving", "quality improvement", "significant inefficiency", "redundant steps", "data inaccuracy"},
-        "medium": {"improve", "suggestion", "idea", "process enhancement", "workflow improvement", "efficiency gain", "better method", "new system", "simplify", "training need", "communication gap"},
-        "negation": {"not", "no", "without", "current process is fine", "working well"},
+        "critical": {"bottleneck", "critical delay", "major inefficiency", "costly error", "legal non-compliance", "regulatory violation", "audit failure", "severe waste"},
+        "high": {"automate", "streamline", "optimize", "reduce waste", "cost saving", "quality improvement", "significant inefficiency", "redundant steps", "data inaccuracy", "improve workflow", "new procedure", "expedite", "better method"},
+        "medium": {"improve", "suggestion", "idea", "process enhancement", "workflow improvement", "efficiency gain", "better method", "new system", "simplify", "training need", "communication gap", "feedback mechanism", "documentation"},
+        "negation": {"not", "no", "without", "current process is fine", "working well", "efficient", "optimal"},
     },
-    "Facility/Environment Issue": {
-        "critical": {"structural integrity", "major leak", "fire hazard", "mold infestation", "pest infestation", "unsafe air quality", "sewage backup"},
-        "high": {"extreme temperature", "poor ventilation", "odor", "dirty environment", "security breach", "blocked access", "water damage", "power outage", "broken fixture"},
-        "medium": {"supplies low", "lighting issue", "parking problem", "temperature uncomfortable", "cold office", "warm office", "comfort issue", "HVAC problem", "messy area", "restroom issue", "cleaning needed", "broken furniture", "noise disturbance", "wifi issue"},
-        "negation": {"not", "no", "without", "clean", "comfortable", "functional", "acceptable"},
+    # The "Other" category is now a fallback for anything that doesn't fit the main three well.
+    "Other": {
+        "medium": {"general inquiry", "feedback", "suggestion", "question", "comment", "miscellaneous", "not listed", "supplies", "lighting", "parking"}, # General terms
+        "negation": [],
     }
 }
 
@@ -75,7 +74,7 @@ class ClassifierLogic:
     def __init__(self):
         self.submissions: List[SubmissionRecord] = []
         self.retention_hours = 168
-        self.similarity_threshold = 0.6
+        self.similarity_threshold = 0.7 # Increased threshold for stricter duplicate matching
         self.escalation_threshold = 2
 
     def _normalize_text(self, text: str) -> List[str]:
@@ -136,9 +135,9 @@ class ClassifierLogic:
             return Priority.HIGH, factors
 
         # 3. If no explicit levels or strong critical/high indicators, check for any positive category score
-        # This covers cases like "Process Improvement Idea" or general "Facility/Environment Issue" with medium keywords
+        # This covers cases like "Process Improvement Idea" or general "Other" with medium keywords
         # Also ensures that if any category has a score, it's at least Medium
-        if any(s > 0 for s in scores.values()): # Check if any category has a score (even 'Facility/Environment Issue')
+        if any(s > 0 for s in scores.values()): # Check if any category has a score (even 'Other')
             factors.append("General issue indicators detected across categories.")
             return Priority.MEDIUM, factors
         
@@ -152,15 +151,20 @@ class ClassifierLogic:
         # Remove old submissions from memory
         self.submissions = [s for s in self.submissions if s.timestamp > datetime.now() - timedelta(hours=self.retention_hours)]
         
-        new_hash, similar_count = hashlib.md5(text.lower().encode()).hexdigest(), 0
+        new_hash = hashlib.md5(text.lower().encode()).hexdigest()
+        similar_count = 0
         
-        # Check for existing similar submissions
         for s in self.submissions:
-            # Match by hash (exact duplicate) or by semantic similarity within the same category
-            is_match = (s.submission_hash == new_hash) or \
-                       (difflib.SequenceMatcher(None, text.lower(), s.text.lower()).ratio() > self.similarity_threshold and s.category == category)
-            if is_match:
+            # First, check for exact hash match (very strong duplicate)
+            if s.submission_hash == new_hash:
                 similar_count += 1
+                continue # No need for fuzzy matching if exact hash
+            
+            # Then, perform fuzzy matching only if categories are the same
+            if s.category == category:
+                similarity_ratio = difflib.SequenceMatcher(None, text.lower(), s.text.lower()).ratio()
+                if similarity_ratio > self.similarity_threshold:
+                    similar_count += 1
         
         is_dup, escalated = similar_count > 0, False
         final_prio, original_prio = priority, priority # Store original priority before potential escalation
@@ -168,9 +172,11 @@ class ClassifierLogic:
         # Logic for auto-escalation of Low/Medium issues based on recurrence
         if original_prio in (Priority.LOW.value, Priority.MEDIUM.value) and similar_count >= self.escalation_threshold:
             escalated, final_prio = True, Priority.CRITICAL.value
+            logging.info(f"Escalating from {original_prio} to {final_prio} due to {similar_count} similar entries for text: '{text[:50]}...'")
         elif original_prio == Priority.CRITICAL.value and similar_count > 0:
             # If an issue is already critical and re-occurs, mark it as escalated for tracking
             escalated = True
+            logging.info(f"Critical issue re-occurred for text: '{text[:50]}...' (similar_count: {similar_count})")
         
         # Store the current submission with its determined (or escalated) priority
         self.submissions.append(SubmissionRecord(text=text, category=category, priority=final_prio, timestamp=datetime.now(), submission_hash=new_hash, is_escalated=escalated))
@@ -194,8 +200,8 @@ class ClassifierLogic:
             best_category = max(categories_with_scores, key=categories_with_scores.get)
         else:
             # If no specific keywords matched any category with a positive score,
-            # assign a default category for general feedback.
-            best_category = "Facility/Environment Issue" # Default if no specific match
+            # assign to "Other" as a general fallback category.
+            best_category = "Other"
 
             
         initial_priority, factors = self._determine_priority(scores, text)
@@ -208,28 +214,42 @@ class ClassifierLogic:
         
         # Calculate confidence as an integer between 0 and 10
         # The score is based on the best category's score relative to a conceptual max score.
-        # A simple max score could be 3 (critical keyword) * number of keywords if they all matched.
-        # Let's use a dynamic max_score_potential based on the category's keyword presence.
+        # Max score for confidence for any category: sum of max scores (3.0 for critical, 2.0 for high, 1.0 for medium)
+        # This is the maximum possible score if all types of keywords are present and weighted.
+        # A reasonable upper bound for max_score_potential could be the sum of highest weights from each category type.
+        # For simplicity, let's assume a max potential score that reflects strong keyword presence.
         
-        # If the best category has actual scores, normalize against its potential maximum.
-        # A simple approach: sum of max scores (3+2+1=6) for a category, assuming it contains all levels.
-        max_score_for_chosen_category = 0
-        if best_category in KNOWLEDGE_BASE:
-            # Assuming max score is when one critical, one high, one medium keyword hit.
-            # This is a simplification; a more complex model might count multiple hits.
-            max_score_for_chosen_category += 3.0 if KNOWLEDGE_BASE[best_category].get("critical") else 0
-            max_score_for_chosen_category += 2.0 if KNOWLEDGE_BASE[best_category].get("high") else 0
-            max_score_for_chosen_category += 1.0 if KNOWLEDGE_BASE[best_category].get("medium") else 0
+        # Max theoretical score for a single category is when a critical, high, and medium keyword are all present.
+        # Max score for a single token hitting critical is 3.0. A phrase might have multiple such keywords.
+        # Let's consider an effective max score that implies high confidence.
+        # If a category score is 3.0 (one critical keyword), it should be high confidence.
+        # If it's 6.0 (e.g., two critical keywords or critical+high+medium), it should be full confidence.
         
-        # If best_category has no score (e.g., initial "Invalid Input" or "Other" with no specific hits),
-        # set confidence to 0 to avoid division by zero or inflated confidence.
-        if scores.get(best_category, 0) == 0 or max_score_for_chosen_category == 0:
-            confidence_score_0_10 = 0
-        else:
-            normalized_score = scores.get(best_category, 0) / max_score_for_chosen_category
-            confidence_score_0_10 = int(round(normalized_score * 10))
-            # Clamp between 0 and 10
-            confidence_score_0_10 = max(0, min(10, confidence_score_0_10))
+        score_for_confidence = scores.get(best_category, 0)
+        
+        # Mapping:
+        # Score 0 -> Confidence 0
+        # Score 1-2 -> Confidence 1-3 (Medium keywords)
+        # Score 3-5 -> Confidence 4-7 (High/Critical keywords, some combination)
+        # Score 6+ -> Confidence 8-10 (Multiple strong keywords)
+        
+        if score_for_confidence <= 0:
+            confidence_score_0_10 = 0 # No relevant keywords found
+        elif score_for_confidence < 1.5: # 0 < score < 1.5
+            confidence_score_0_10 = 1 # Very low confidence, perhaps only very weak matches
+        elif score_for_confidence < 2.5: # 1.5 <= score < 2.5 (e.g., one medium keyword or more than one weak)
+            confidence_score_0_10 = 3 # Low to medium confidence
+        elif score_for_confidence < 3.5: # 2.5 <= score < 3.5 (e.g., one high or multiple mediums)
+            confidence_score_0_10 = 5 # Medium confidence
+        elif score_for_confidence < 4.5: # 3.5 <= score < 4.5 (e.g., one critical)
+            confidence_score_0_10 = 7 # Good confidence
+        elif score_for_confidence < 6.0: # 4.5 <= score < 6.0 (e.g., critical + medium/high)
+            confidence_score_0_10 = 9 # High confidence
+        else: # score >= 6.0 (multiple strong matches)
+            confidence_score_0_10 = 10 # Very High/Full confidence
+
+        # Ensure the score is clamped between 0 and 10
+        confidence_score_0_10 = max(0, min(10, confidence_score_0_10))
 
         return ClassificationResult(
             best_category, final_prio, confidence_score_0_10,
